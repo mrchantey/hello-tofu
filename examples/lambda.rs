@@ -1,239 +1,176 @@
+//! Lambda + API Gateway + Cloudflare DNS example using the typed provider API.
+//!
+//! Run with:
+//!     cargo run --example lambda --features providers_aws_lambda,providers_cloudflare_dns
+
 use hello_tofu::config_exporter::{ConfigExporter, Output};
+use hello_tofu::providers::aws_lambda::*;
+use hello_tofu::providers::cloudflare_dns::*;
 use serde_json::json;
-use std::env;
-use std::fs;
-use std::process::Command;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_name = "beet-site";
     let stage = "dev";
-    let prefix = format!("{}--{}", app_name, stage);
+    let prefix = format!("{app_name}--{stage}");
 
-    let mut exporter = ConfigExporter::new();
-
-    // Required providers
-    exporter.add_required_provider("aws", "hashicorp/aws", "~> 6.0");
-
-    // Provider config
-    exporter.add_provider(
-        "aws",
-        &json!({
-            "region": "us-west-2"
-        }),
-    )?;
-
+    // -----------------------------------------------------------------
     // S3 Buckets
-    exporter.add_resource(
-        "aws_s3_bucket",
-        "assets",
-        &json!({
-            "bucket": format!("{}--assets", prefix),
-            "force_destroy": true
-        }),
-    )?;
+    // -----------------------------------------------------------------
 
-    exporter.add_resource(
-        "aws_s3_bucket",
-        "html",
-        &json!({
-            "bucket": format!("{}--html", prefix),
-            "force_destroy": true
-        }),
-    )?;
+    let assets_bucket = AwsS3BucketDetails {
+        bucket: Some(format!("{prefix}--assets")),
+        force_destroy: Some(true),
+        ..Default::default()
+    };
 
+    let html_bucket = AwsS3BucketDetails {
+        bucket: Some(format!("{prefix}--html")),
+        force_destroy: Some(true),
+        ..Default::default()
+    };
+
+    // -----------------------------------------------------------------
     // IAM Role for Lambda
+    // -----------------------------------------------------------------
+
     let assume_role_policy = json!({
         "Version": "2012-10-17",
         "Statement": [{
             "Action": "sts:AssumeRole",
             "Effect": "Allow",
-            "Principal": {
-                "Service": "lambda.amazonaws.com"
-            }
+            "Principal": { "Service": "lambda.amazonaws.com" }
         }]
     });
 
-    exporter.add_resource(
-        "aws_iam_role",
-        "lambda_role",
-        &json!({
-            "name": format!("{}--lambda-role", prefix),
-            "assume_role_policy": assume_role_policy.to_string()
-        }),
-    )?;
+    let mut lambda_role = AwsIamRoleDetails::new(assume_role_policy.to_string());
+    lambda_role.name = Some(format!("{prefix}--lambda-role"));
 
-    // IAM Policy Attachments
-    exporter.add_resource(
-        "aws_iam_role_policy_attachment",
-        "lambda_basic",
-        &json!({
-            "role": "${aws_iam_role.lambda_role.name}",
-            "policy_arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-        }),
-    )?;
+    let lambda_basic_policy = AwsIamRolePolicyAttachmentDetails::new(
+        "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole".into(),
+        "${aws_iam_role.lambda_role.name}".into(),
+    );
 
-    // Lambda function
-    exporter.add_resource(
-        "aws_lambda_function",
-        "router",
-        &json!({
-            "function_name": format!("{}--router", prefix),
-            "role": "${aws_iam_role.lambda_role.arn}",
-            "runtime": "provided.al2023",
-            "handler": "bootstrap",
-            "filename": "lambda.zip",
-            "timeout": 180,
-            "memory_size": 1024,
-            "source_code_hash": ""
-        }),
-    )?;
+    // -----------------------------------------------------------------
+    // Lambda Function + URL
+    // -----------------------------------------------------------------
 
-    // Lambda Function URL
-    exporter.add_resource(
-        "aws_lambda_function_url",
-        "router_url",
-        &json!({
-            "function_name": "${aws_lambda_function.router.function_name}",
-            "authorization_type": "NONE"
-        }),
-    )?;
+    let mut router = AwsLambdaFunctionDetails::new(
+        format!("{prefix}--router"),
+        "${aws_iam_role.lambda_role.arn}".into(),
+    );
+    router.runtime = Some("provided.al2023".into());
+    router.handler = Some("bootstrap".into());
+    router.filename = Some("lambda.zip".into());
+    router.timeout = Some(180);
+    router.memory_size = Some(1024);
+    router.source_code_hash = Some(String::new());
 
+    let router_url = AwsLambdaFunctionUrlDetails::new(
+        "NONE".into(),
+        "${aws_lambda_function.router.function_name}".into(),
+    );
+
+    // -----------------------------------------------------------------
     // API Gateway v2
-    exporter.add_resource(
-        "aws_apigatewayv2_api",
-        "gateway",
-        &json!({
-            "name": format!("{}--gateway", prefix),
-            "protocol_type": "HTTP"
-        }),
-    )?;
+    // -----------------------------------------------------------------
 
-    // API Gateway Integration
-    exporter.add_resource(
-        "aws_apigatewayv2_integration",
-        "lambda_integration",
-        &json!({
-            "api_id": "${aws_apigatewayv2_api.gateway.id}",
-            "integration_type": "AWS_PROXY",
-            "integration_uri": "${aws_lambda_function.router.invoke_arn}",
-            "payload_format_version": "2.0"
-        }),
-    )?;
+    let gateway = AwsApigatewayv2ApiDetails::new(format!("{prefix}--gateway"), "HTTP".into());
 
-    // API Gateway Route (default)
-    exporter.add_resource(
-        "aws_apigatewayv2_route",
-        "default_route",
-        &json!({
-            "api_id": "${aws_apigatewayv2_api.gateway.id}",
-            "route_key": "$default",
-            "target": "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
-        }),
-    )?;
+    let mut lambda_integration = AwsApigatewayv2IntegrationDetails::new(
+        "${aws_apigatewayv2_api.gateway.id}".into(),
+        "AWS_PROXY".into(),
+    );
+    lambda_integration.integration_uri = Some("${aws_lambda_function.router.invoke_arn}".into());
+    lambda_integration.payload_format_version = Some("2.0".into());
 
-    // API Gateway Stage
-    exporter.add_resource(
-        "aws_apigatewayv2_stage",
-        "default_stage",
-        &json!({
-            "api_id": "${aws_apigatewayv2_api.gateway.id}",
-            "name": "$default",
-            "auto_deploy": true
-        }),
-    )?;
+    let mut default_route = AwsApigatewayv2RouteDetails::new(
+        "${aws_apigatewayv2_api.gateway.id}".into(),
+        "$default".into(),
+    );
+    default_route.target =
+        Some("integrations/${aws_apigatewayv2_integration.lambda_integration.id}".into());
 
+    let mut default_stage = AwsApigatewayv2StageDetails::new(
+        "${aws_apigatewayv2_api.gateway.id}".into(),
+        "$default".into(),
+    );
+    default_stage.auto_deploy = Some(true);
+
+    // -----------------------------------------------------------------
     // Lambda Permission for API Gateway
-    exporter.add_resource(
-        "aws_lambda_permission",
-        "apigw_lambda",
-        &json!({
-            "action": "lambda:InvokeFunction",
-            "function_name": "${aws_lambda_function.router.function_name}",
-            "principal": "apigateway.amazonaws.com",
-            "source_arn": "${aws_apigatewayv2_api.gateway.execution_arn}/*/*"
-        }),
-    )?;
+    // -----------------------------------------------------------------
 
-    // Outputs
-    exporter.add_output(
-        "api_endpoint",
-        Output {
-            value: json!("${aws_apigatewayv2_api.gateway.api_endpoint}"),
-            description: Some("The API Gateway endpoint URL".to_string()),
-            sensitive: None,
-        },
+    let mut apigw_permission = AwsLambdaPermissionDetails::new(
+        "lambda:InvokeFunction".into(),
+        "${aws_lambda_function.router.function_name}".into(),
+        "apigateway.amazonaws.com".into(),
     );
-    exporter.add_output(
-        "function_url",
-        Output {
-            value: json!("${aws_lambda_function_url.router_url.function_url}"),
-            description: Some("The Lambda function URL".to_string()),
-            sensitive: None,
-        },
-    );
-    exporter.add_output(
-        "assets_bucket",
-        Output {
-            value: json!("${aws_s3_bucket.assets.bucket}"),
-            description: Some("The S3 assets bucket name".to_string()),
-            sensitive: None,
-        },
-    );
+    apigw_permission.source_arn = Some("${aws_apigatewayv2_api.gateway.execution_arn}/*/*".into());
 
-    // Write to a temp directory and validate
-    let out_dir = env::temp_dir().join("hello-tofu-lambda");
-    fs::create_dir_all(&out_dir)?;
+    // -----------------------------------------------------------------
+    // Cloudflare DNS — point domain at the API Gateway
+    // -----------------------------------------------------------------
 
+    let mut dns_record = CloudflareDnsRecordDetails::new(
+        format!("{stage}.beetstack.dev"),
+        1, // TTL=1 means "automatic" in Cloudflare
+        "CNAME".into(),
+        "CLOUDFLARE_ZONE_ID".into(), // replace at deploy time / use a variable
+    );
+    dns_record.content = Some("${aws_apigatewayv2_api.gateway.api_endpoint}".into());
+    dns_record.proxied = Some(true);
+
+    // -----------------------------------------------------------------
+    // Assemble the config
+    // -----------------------------------------------------------------
+
+    let exporter = ConfigExporter::new()
+        .with_resource("assets", &assets_bucket)
+        .with_resource("html", &html_bucket)
+        .with_resource("lambda_role", &lambda_role)
+        .with_resource("lambda_basic", &lambda_basic_policy)
+        .with_resource("router", &router)
+        .with_resource("router_url", &router_url)
+        .with_resource("gateway", &gateway)
+        .with_resource("lambda_integration", &lambda_integration)
+        .with_resource("default_route", &default_route)
+        .with_resource("default_stage", &default_stage)
+        .with_resource("apigw_lambda", &apigw_permission)
+        .with_resource("domain", &dns_record)
+        .with_output(
+            "api_endpoint",
+            Output {
+                value: json!("${aws_apigatewayv2_api.gateway.api_endpoint}"),
+                description: Some("The API Gateway endpoint URL".into()),
+                sensitive: None,
+            },
+        )
+        .with_output(
+            "function_url",
+            Output {
+                value: json!("${aws_lambda_function_url.router_url.function_url}"),
+                description: Some("The Lambda function URL".into()),
+                sensitive: None,
+            },
+        )
+        .with_output(
+            "assets_bucket",
+            Output {
+                value: json!("${aws_s3_bucket.assets.bucket}"),
+                description: Some("The S3 assets bucket name".into()),
+                sensitive: None,
+            },
+        );
+
+    // -----------------------------------------------------------------
+    // Export + validate
+    // -----------------------------------------------------------------
+
+    let out_dir = std::env::temp_dir().join("hello-tofu-lambda");
     let out_path = out_dir.join("main.tf.json");
-    exporter.export_to_file(&out_path)?;
-    println!("Generated: {}", out_path.display());
 
-    // Print first 50 and last 20 lines
-    let content = fs::read_to_string(&out_path)?;
-    let lines: Vec<&str> = content.lines().collect();
-    println!("\n--- First 50 lines ---");
-    for line in lines.iter().take(50) {
-        println!("{}", line);
-    }
-    if lines.len() > 70 {
-        println!("\n... ({} lines total) ...\n", lines.len());
-        println!("--- Last 20 lines ---");
-        for line in lines.iter().skip(lines.len() - 20) {
-            println!("{}", line);
-        }
-    }
-
-    // Run tofu validate
-    println!("\n--- Running tofu init + validate ---");
-    let init = Command::new("tofu")
-        .current_dir(&out_dir)
-        .args(["init"])
-        .output()?;
-    if !init.status.success() {
-        eprintln!(
-            "tofu init stderr: {}",
-            String::from_utf8_lossy(&init.stderr)
-        );
-        std::process::exit(1);
-    }
-    println!("tofu init: OK");
-
-    let validate = Command::new("tofu")
-        .current_dir(&out_dir)
-        .args(["validate", "-json"])
-        .output()?;
-
-    let validate_output = String::from_utf8_lossy(&validate.stdout);
-    println!("tofu validate output: {}", validate_output);
-
-    if !validate.status.success() {
-        eprintln!(
-            "tofu validate stderr: {}",
-            String::from_utf8_lossy(&validate.stderr)
-        );
-        std::process::exit(1);
-    }
-    println!("tofu validate: PASSED!");
+    let result = exporter.export_and_validate(&out_path)?;
+    println!("tofu validate: {result}");
 
     Ok(())
 }

@@ -1,5 +1,6 @@
 use crate::schema_bindgen::config::CodeGeneratorConfig;
 use crate::schema_bindgen::emit::{CodeGenerator, Registry};
+use crate::terra::{ResourceFilter, ResourceMeta};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_reflection::{ContainerFormat, Format, Named, VariantFormat};
@@ -165,6 +166,51 @@ pub fn export_schema_to_registry(
         generate_config(&roots, &mut r);
     }
     Ok(r)
+}
+
+/// Export only the resources that pass through `filter`, skipping root enums
+/// and the top-level `config` struct.  Returns both the registry and metadata
+/// about every generated resource (needed for trait-impl generation).
+pub fn export_filtered_resources(
+    schema: &TerraformSchemaExport,
+    filter: &ResourceFilter,
+) -> std::result::Result<(Registry, Vec<ResourceMeta>), Box<dyn std::error::Error>> {
+    let mut registry = Registry::new();
+    let mut meta = Vec::new();
+
+    for (provider_source, provider_schema) in &schema.provider_schemas {
+        if !filter.has_provider(provider_source) {
+            continue;
+        }
+
+        if let Some(resource_schemas) = &provider_schema.resource_schemas {
+            for (resource_name, schema_item) in resource_schemas {
+                if !filter.allows(provider_source, resource_name) {
+                    continue;
+                }
+
+                let mut block = schema_item.block.clone();
+                inject_meta_arguments(&mut block);
+                export_block(
+                    Some("resource".to_owned()),
+                    resource_name,
+                    block,
+                    &mut registry,
+                )?;
+
+                // The struct name mirrors what export_block inserts.
+                let struct_name = format!("{}_details", resource_name);
+
+                meta.push(ResourceMeta {
+                    resource_type: resource_name.clone(),
+                    provider_source: provider_source.clone(),
+                    struct_name,
+                });
+            }
+        }
+    }
+
+    Ok((registry, meta))
 }
 
 fn generate_config(roots: &BTreeMap<&str, Vec<&str>>, reg: &mut Registry) {

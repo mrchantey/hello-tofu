@@ -10,14 +10,28 @@ serde_bytes = "0.11"
 serde-generate = "0.33"
 serde-reflection = "0.5"
 textwrap = "0.16"
+heck = "0.5"
 
 [dev-dependencies]
+hello-tofu = {path =".", features=["providers_aws_lambda", "providers_aws_lightsail","providers_cloudflare_dns"]}
 tempfile = "3"
+
+[features]
+default = []
+providers_aws_lambda = []
+providers_aws_lightsail = []
+providers_cloudflare_dns = []
 
 [[example]]
 name = "lightsail"
 path = "examples/lightsail.rs"
+required-features = ["providers_aws_lightsail"]
 
 [[example]]
 name = "lambda"
 path = "examples/lambda.rs"
+required-features = ["providers_aws_lambda", "providers_cloudflare_dns"]
+
+[[example]]
+name = "generate"
+path = "examples/generate.rs"

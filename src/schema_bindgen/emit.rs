@@ -1,19 +1,22 @@
-// Copyright (c) Facebook, Inc. and its affiliates
-// SPDX-License-Identifier: MIT OR Apache-2.0
+//!
+//! Stripped-down version of serde-reflection's code generator for Rust.
+//!
+//! Main changes from upstream:
+//! - Qualified names (`(Option<String>, String)`) for Registry entries
+//! - Smart `Default` derive: only added when **all** fields are optional
+//! - Optional `UpperCamelCase` conversion for generated type names (via `heck`)
+//! - Custom stub generation
+//!
 
-//!
-//! Stripped down version of serde reflection's code generator for Rust.
-//! Main changes are around supporting qualified names for Regitry entries as well
-//! as well as customing stubs generation.
-//!
 use crate::schema_bindgen::config::CodeGeneratorConfig;
+use heck::ToUpperCamelCase;
 use serde_generate::indent::{IndentConfig, IndentedWriter};
 use serde_reflection::{ContainerFormat, Format, Named, VariantFormat};
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Result, Write};
 
-/// A map of container formats indexed by a qualified name
+/// A map of container formats indexed by a qualified name.
 pub type QualifiedName = (Option<String>, String);
 pub type Registry = BTreeMap<QualifiedName, ContainerFormat>;
 
@@ -37,8 +40,12 @@ struct RustEmitter<'a, T> {
     generator: &'a CodeGenerator<'a>,
     /// Track which definitions have a known size. (Used to add `Box` types.)
     known_sizes: Cow<'a, HashSet<&'a str>>,
-    /// Current namespace (e.g. vec!["my_package", "my_module", "MyClass"])
+    /// Current namespace (e.g. vec!["my_package", "my_module", "MyClass"]).
     current_namespace: Vec<String>,
+    /// When title-case is enabled, maps original full names to their
+    /// `UpperCamelCase` equivalents so that `TypeName` references can be
+    /// rewritten consistently.
+    type_renames: HashMap<String, String>,
 }
 
 impl<'a> CodeGenerator<'a> {
@@ -61,8 +68,8 @@ impl<'a> CodeGenerator<'a> {
         self
     }
 
-    /// Additional block of text added after `derive_macros` (if any), before each new
-    /// container definition.
+    /// Additional block of text added after `derive_macros` (if any), before
+    /// each new container definition.
     pub fn with_custom_derive_block(mut self, custom_derive_block: Option<String>) -> Self {
         self.custom_derive_block = custom_derive_block;
         self
@@ -99,11 +106,20 @@ impl<'a> CodeGenerator<'a> {
             .split('.')
             .map(String::from)
             .collect();
+
+        // Build the title-case rename map when the option is enabled.
+        let type_renames = if self.config.use_title_case {
+            Self::build_rename_map(registry)
+        } else {
+            HashMap::new()
+        };
+
         let mut emitter = RustEmitter {
             out: IndentedWriter::new(out, IndentConfig::Space(4)),
             generator: self,
             known_sizes: Cow::Owned(known_sizes),
             current_namespace,
+            type_renames,
         };
 
         emitter.output_preamble()?;
@@ -113,12 +129,68 @@ impl<'a> CodeGenerator<'a> {
         }
         Ok(())
     }
+
+    // ------------------------------------------------------------------
+    // Title-case helpers
+    // ------------------------------------------------------------------
+
+    /// Build a map from original full type names to their UpperCamelCase form.
+    fn build_rename_map(registry: &Registry) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        for (ns, name) in registry.keys() {
+            let full_name = match ns {
+                Some(n) => format!("{}_{}", n, name),
+                None => name.clone(),
+            };
+            let title = full_name.to_upper_camel_case();
+            if title != full_name {
+                map.insert(full_name, title);
+            }
+        }
+        map
+    }
 }
+
+// =========================================================================
+// RustEmitter
+// =========================================================================
 
 impl<'a, T> RustEmitter<'a, T>
 where
     T: std::io::Write,
 {
+    // ------------------------------------------------------------------
+    // Name conversion helpers
+    // ------------------------------------------------------------------
+
+    /// Apply the title-case rename map to a type name string.
+    ///
+    /// For simple names that are a direct key in the map this is a straight
+    /// lookup.  For compound names (e.g. `Vec<Map<String, Vec<foo_bar>>>`)
+    /// we replace all known substrings, longest-first to avoid partial
+    /// matches.
+    fn rename_type(&self, name: &str) -> String {
+        if self.type_renames.is_empty() {
+            return name.to_string();
+        }
+        // Fast path: direct lookup
+        if let Some(renamed) = self.type_renames.get(name) {
+            return renamed.clone();
+        }
+        // Slow path: replace all known names inside a compound expression.
+        let mut result = name.to_string();
+        let mut sorted: Vec<_> = self.type_renames.iter().collect();
+        sorted.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        for (old, new) in sorted {
+            result = result.replace(old.as_str(), new.as_str());
+        }
+        result
+    }
+
+    // ------------------------------------------------------------------
+    // Output helpers
+    // ------------------------------------------------------------------
+
     fn output_comment(&mut self, name: &str) -> std::io::Result<()> {
         let mut path = self.current_namespace.clone();
         path.push(name.to_string());
@@ -150,7 +222,6 @@ where
             writeln!(self.out, "use serde_bytes::ByteBuf as Bytes;")?;
         }
         for (module, definitions) in &self.generator.config.external_definitions {
-            // Skip the empty module name.
             if !module.is_empty() {
                 writeln!(
                     self.out,
@@ -181,20 +252,20 @@ where
             )?,
             _ => (),
         }
-
         Ok(())
     }
 
-    fn quote_type(format: &Format, known_sizes: Option<&HashSet<&str>>) -> String {
+    fn quote_type(&self, format: &Format, known_sizes: Option<&HashSet<&str>>) -> String {
         use Format::*;
         match format {
             TypeName(x) => {
+                let display_name = self.rename_type(x);
                 if let Some(set) = known_sizes {
                     if !set.contains(x.as_str()) && !x.as_str().starts_with("Vec") {
-                        return format!("Box<{}>", x);
+                        return format!("Box<{}>", display_name);
                     }
                 }
-                x.to_string()
+                display_name
             }
             Unit => "()".into(),
             Bool => "bool".into(),
@@ -214,26 +285,30 @@ where
             Str => "String".into(),
             Bytes => "Bytes".into(),
 
-            Option(format) => format!("Option<{}>", Self::quote_type(format, known_sizes)),
-            Seq(format) => format!("Vec<{}>", Self::quote_type(format, None)),
+            Option(format) => {
+                format!("Option<{}>", self.quote_type(format, known_sizes))
+            }
+            Seq(format) => format!("Vec<{}>", self.quote_type(format, None)),
             Map { key, value } => format!(
                 "Map<{}, {}>",
-                Self::quote_type(key, None),
-                Self::quote_type(value, None)
+                self.quote_type(key, None),
+                self.quote_type(value, None)
             ),
-            Tuple(formats) => format!("({})", Self::quote_types(formats, known_sizes)),
+            Tuple(formats) => {
+                format!("({})", self.quote_types(formats, known_sizes))
+            }
             TupleArray { content, size } => {
-                format!("[{}; {}]", Self::quote_type(content, known_sizes), *size)
+                format!("[{}; {}]", self.quote_type(content, known_sizes), *size)
             }
 
             Variable(_) => panic!("unexpected value"),
         }
     }
 
-    fn quote_types(formats: &[Format], known_sizes: Option<&HashSet<&str>>) -> String {
+    fn quote_types(&self, formats: &[Format], known_sizes: Option<&HashSet<&str>>) -> String {
         formats
             .iter()
-            .map(|x| Self::quote_type(x, known_sizes))
+            .map(|x| self.quote_type(x, known_sizes))
             .collect::<Vec<_>>()
             .join(", ")
     }
@@ -253,7 +328,7 @@ where
                 "{}{}: {},",
                 prefix,
                 field.name,
-                Self::quote_type(&field.value, Some(&self.known_sizes)),
+                self.quote_type(&field.value, Some(&self.known_sizes)),
             )?;
         }
         Ok(())
@@ -268,13 +343,13 @@ where
                 self.out,
                 "{}({}),",
                 name,
-                Self::quote_type(format, Some(&self.known_sizes))
+                self.quote_type(format, Some(&self.known_sizes))
             ),
             Tuple(formats) => writeln!(
                 self.out,
                 "{}({}),",
                 name,
-                Self::quote_types(formats, Some(&self.known_sizes))
+                self.quote_types(formats, Some(&self.known_sizes))
             ),
             Struct(fields) => {
                 writeln!(self.out, "{} {{", name)?;
@@ -301,6 +376,11 @@ where
         Ok(())
     }
 
+    /// Returns `true` when every field in a struct is `Option<_>`.
+    fn all_fields_optional(fields: &[Named<Format>]) -> bool {
+        fields.iter().all(|f| matches!(f.value, Format::Option(_)))
+    }
+
     fn output_container(
         &mut self,
         namespace: &Option<String>,
@@ -312,46 +392,81 @@ where
         derive_macros.push("Serialize".to_string());
         derive_macros.push("Deserialize".to_string());
         let mut prefix = String::new();
-        if !derive_macros.is_empty() {
-            prefix.push_str(&format!("#[derive({})]\n", derive_macros.join(", ")));
-        }
-        if let Some(text) = &self.generator.custom_derive_block {
-            prefix.push_str(text);
-            prefix.push('\n');
-        }
 
         use ContainerFormat::*;
         match format {
-            UnitStruct => writeln!(self.out, "{}struct {};\n", prefix, name),
-            NewTypeStruct(format) => writeln!(
-                self.out,
-                "{}struct {}({}{});\n",
-                prefix,
-                name,
-                if self.generator.track_visibility {
-                    "pub "
-                } else {
-                    ""
-                },
-                Self::quote_type(format, Some(&self.known_sizes))
-            ),
-            TupleStruct(formats) => writeln!(
-                self.out,
-                "{}struct {}({});\n",
-                prefix,
-                name,
-                Self::quote_types(formats, Some(&self.known_sizes))
-            ),
+            UnitStruct => {
+                if !derive_macros.is_empty() {
+                    prefix.push_str(&format!("#[derive({})]\n", derive_macros.join(", ")));
+                }
+                if let Some(text) = &self.generator.custom_derive_block {
+                    prefix.push_str(text);
+                    prefix.push('\n');
+                }
+                writeln!(self.out, "{}struct {};\n", prefix, name)
+            }
+            NewTypeStruct(fmt) => {
+                if !derive_macros.is_empty() {
+                    prefix.push_str(&format!("#[derive({})]\n", derive_macros.join(", ")));
+                }
+                if let Some(text) = &self.generator.custom_derive_block {
+                    prefix.push_str(text);
+                    prefix.push('\n');
+                }
+                writeln!(
+                    self.out,
+                    "{}struct {}({}{});\n",
+                    prefix,
+                    name,
+                    if self.generator.track_visibility {
+                        "pub "
+                    } else {
+                        ""
+                    },
+                    self.quote_type(fmt, Some(&self.known_sizes))
+                )
+            }
+            TupleStruct(formats) => {
+                if !derive_macros.is_empty() {
+                    prefix.push_str(&format!("#[derive({})]\n", derive_macros.join(", ")));
+                }
+                if let Some(text) = &self.generator.custom_derive_block {
+                    prefix.push_str(text);
+                    prefix.push('\n');
+                }
+                writeln!(
+                    self.out,
+                    "{}struct {}({});\n",
+                    prefix,
+                    name,
+                    self.quote_types(formats, Some(&self.known_sizes))
+                )
+            }
             Struct(fields) => {
-                let mut struct_name = name.to_string();
+                // Smart Default: only derive Default when every field is
+                // optional – structs with required fields get a generated
+                // `new()` constructor instead.
+                if Self::all_fields_optional(fields) {
+                    derive_macros.push("Default".to_string());
+                }
+
                 prefix.clear();
-                derive_macros.push("Default".to_string());
                 prefix.push_str(&format!("#[derive({})]\n", derive_macros.join(", ")));
+
+                if let Some(text) = &self.generator.custom_derive_block {
+                    prefix.push_str(text);
+                    prefix.push('\n');
+                }
+
+                let mut struct_name = name.to_string();
 
                 if let Some(ns) = namespace {
                     prefix.push_str(&format!("#[serde(rename = \"{}\")]\n", name));
-                    struct_name = format!("{}_{}", ns, name)
+                    struct_name = format!("{}_{}", ns, name);
                 }
+
+                // Apply title-case conversion to the struct name.
+                let struct_name = self.rename_type(&struct_name);
 
                 if self.generator.track_visibility {
                     prefix.push_str("pub ");
@@ -366,6 +481,13 @@ where
                 writeln!(self.out, "}}\n")
             }
             Enum(variants) => {
+                if !derive_macros.is_empty() {
+                    prefix.push_str(&format!("#[derive({})]\n", derive_macros.join(", ")));
+                }
+                if let Some(text) = &self.generator.custom_derive_block {
+                    prefix.push_str(text);
+                    prefix.push('\n');
+                }
                 if self.generator.track_visibility {
                     prefix.push_str("pub ");
                 }

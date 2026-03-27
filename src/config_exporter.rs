@@ -3,11 +3,32 @@
 //! The [`ConfigExporter`] collects provider configurations, resources, data sources,
 //! and variable/output/local definitions, then serializes them into valid
 //! Terraform JSON configuration.
+//!
+//! # Typed API
+//!
+//! When using generated provider bindings that implement [`TerraResource`], the
+//! exporter automatically tracks required providers and serialises resource
+//! bodies with full type safety:
+//!
+//! ```rust,ignore
+//! let bucket = AwsS3BucketDetails { bucket: Some("my-bucket".into()), ..Default::default() };
+//! let exporter = ConfigExporter::new()
+//!     .with_resource("assets", &bucket);
+//! ```
+//!
+//! # Untyped API
+//!
+//! The original `add_resource` / `add_provider` methods that accept raw
+//! `serde_json::Value` or any `Serialize` type are still available for
+//! escape-hatch usage and backward compatibility.
 
+use crate::terra::{TerraProvider, TerraResource};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
+use std::process::Command;
 
 /// A required provider declaration.
 pub struct ProviderRequirement {
@@ -33,12 +54,26 @@ pub struct Output {
 
 /// Builds and exports a complete Terraform JSON configuration.
 ///
-/// # Example
+/// # Example (typed)
+/// ```rust,ignore
+/// let bucket = AwsS3BucketDetails { bucket: Some("my-bucket".into()), ..Default::default() };
+/// let exporter = ConfigExporter::new()
+///     .with_resource("assets", &bucket)
+///     .with_output("bucket_name", Output {
+///         value: json!("${aws_s3_bucket.assets.bucket}"),
+///         description: Some("The bucket name".into()),
+///         sensitive: None,
+///     });
+/// exporter.export_to_file("main.tf.json")?;
+/// exporter.validate()?;
+/// ```
+///
+/// # Example (untyped / legacy)
 /// ```rust,ignore
 /// let mut exporter = ConfigExporter::new();
-/// exporter.add_required_provider("aws", "hashicorp/aws", "~> 5.0");
-/// exporter.add_provider("aws", &serde_json::json!({"region": "us-west-2"}));
-/// exporter.add_resource("aws_instance", "web", &my_instance);
+/// exporter.add_required_provider("aws", "hashicorp/aws", "~> 6.0");
+/// exporter.add_provider("aws", &serde_json::json!({"region": "us-west-2"}))?;
+/// exporter.add_resource("aws_instance", "web", &my_instance)?;
 /// exporter.export_to_file("main.tf.json")?;
 /// ```
 pub struct ConfigExporter {
@@ -49,6 +84,9 @@ pub struct ConfigExporter {
     variables: Map<String, Value>,
     outputs: Map<String, Value>,
     locals: Map<String, Value>,
+
+    /// Providers that have been auto-registered via the typed API.
+    auto_providers: HashSet<String>,
 }
 
 impl ConfigExporter {
@@ -62,15 +100,116 @@ impl ConfigExporter {
             variables: Map::new(),
             outputs: Map::new(),
             locals: Map::new(),
+            auto_providers: HashSet::new(),
         }
     }
 
-    /// Add a required provider declaration.
+    // =====================================================================
+    // Typed API — providers are inferred from resources
+    // =====================================================================
+
+    /// Add a typed resource.  The provider requirement is registered
+    /// automatically from the resource's [`TerraResource`] implementation.
     ///
-    /// # Arguments
-    /// * `name` - Local name for the provider, e.g. "aws"
-    /// * `source` - Provider source, e.g. "hashicorp/aws"
-    /// * `version` - Version constraint, e.g. "~> 5.0"
+    /// Returns `self` for chaining.
+    pub fn with_resource(mut self, name: impl Into<String>, resource: &dyn TerraResource) -> Self {
+        let provider = resource.provider();
+        self.ensure_provider(provider);
+
+        let resource_type = resource.resource_type().to_string();
+        let value = resource.to_json();
+
+        let type_map = self
+            .resources
+            .entry(resource_type)
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Value::Object(map) = type_map {
+            map.insert(name.into(), value);
+        }
+        self
+    }
+
+    /// Add a typed resource via mutable reference (non-chaining variant).
+    pub fn add_typed_resource(
+        &mut self,
+        name: impl Into<String>,
+        resource: &dyn TerraResource,
+    ) -> &mut Self {
+        let provider = resource.provider();
+        self.ensure_provider(provider);
+
+        let resource_type = resource.resource_type().to_string();
+        let value = resource.to_json();
+
+        let type_map = self
+            .resources
+            .entry(resource_type)
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Value::Object(map) = type_map {
+            map.insert(name.into(), value);
+        }
+        self
+    }
+
+    /// Add a provider configuration block for a provider that has already been
+    /// auto-registered (or will be) by adding typed resources.
+    pub fn with_provider_config(
+        mut self,
+        provider: &TerraProvider,
+        config: &impl Serialize,
+    ) -> Result<Self, serde_json::Error> {
+        self.ensure_provider(provider);
+        let value = serde_json::to_value(config)?;
+        self.providers
+            .insert(provider.local_name().to_string(), value);
+        Ok(self)
+    }
+
+    /// Add a variable definition (chaining).
+    pub fn with_variable(mut self, name: impl Into<String>, variable: Variable) -> Self {
+        self.insert_variable(name, variable);
+        self
+    }
+
+    /// Add an output definition (chaining).
+    pub fn with_output(mut self, name: impl Into<String>, output: Output) -> Self {
+        self.insert_output(name, output);
+        self
+    }
+
+    /// Add a local value (chaining).
+    pub fn with_local(
+        mut self,
+        name: impl Into<String>,
+        value: impl Serialize,
+    ) -> Result<Self, serde_json::Error> {
+        let v = serde_json::to_value(value)?;
+        self.locals.insert(name.into(), v);
+        Ok(self)
+    }
+
+    /// Automatically register a provider's `required_providers` entry if it
+    /// hasn't been registered yet.
+    fn ensure_provider(&mut self, provider: &TerraProvider) {
+        let local = provider.local_name().to_string();
+        if self.auto_providers.contains(&local) {
+            return;
+        }
+        self.required_providers.insert(
+            local.clone(),
+            json!({
+                "source": provider.short_source(),
+                "version": provider.version.as_ref(),
+            }),
+        );
+        self.auto_providers.insert(local);
+    }
+
+    // =====================================================================
+    // Untyped / legacy API
+    // =====================================================================
+
+    /// Add a required provider declaration.
     pub fn add_required_provider(&mut self, name: &str, source: &str, version: &str) -> &mut Self {
         self.required_providers.insert(
             name.to_string(),
@@ -83,9 +222,6 @@ impl ConfigExporter {
     }
 
     /// Add a provider configuration block.
-    ///
-    /// `config` can be any Serialize type — typically one of the generated
-    /// provider detail structs, or a raw `serde_json::Value`.
     pub fn add_provider(
         &mut self,
         name: &str,
@@ -97,11 +233,6 @@ impl ConfigExporter {
     }
 
     /// Add a resource block.
-    ///
-    /// # Arguments
-    /// * `resource_type` - The Terraform resource type, e.g. "aws_instance"
-    /// * `name` - The local name for this resource instance, e.g. "web_server"
-    /// * `config` - The resource configuration (any Serialize type)
     pub fn add_resource(
         &mut self,
         resource_type: &str,
@@ -139,33 +270,13 @@ impl ConfigExporter {
 
     /// Add a variable definition.
     pub fn add_variable(&mut self, name: &str, variable: Variable) -> &mut Self {
-        let mut var_obj = Map::new();
-        if let Some(t) = variable.r#type {
-            var_obj.insert("type".to_string(), Value::String(t));
-        }
-        if let Some(d) = variable.default {
-            var_obj.insert("default".to_string(), d);
-        }
-        if let Some(desc) = variable.description {
-            var_obj.insert("description".to_string(), Value::String(desc));
-        }
-        self.variables
-            .insert(name.to_string(), Value::Object(var_obj));
+        self.insert_variable(name, variable);
         self
     }
 
     /// Add an output definition.
     pub fn add_output(&mut self, name: &str, output: Output) -> &mut Self {
-        let mut out_obj = Map::new();
-        out_obj.insert("value".to_string(), output.value);
-        if let Some(desc) = output.description {
-            out_obj.insert("description".to_string(), Value::String(desc));
-        }
-        if let Some(sensitive) = output.sensitive {
-            out_obj.insert("sensitive".to_string(), Value::Bool(sensitive));
-        }
-        self.outputs
-            .insert(name.to_string(), Value::Object(out_obj));
+        self.insert_output(name, output);
         self
     }
 
@@ -179,6 +290,10 @@ impl ConfigExporter {
         self.locals.insert(name.to_string(), v);
         Ok(self)
     }
+
+    // =====================================================================
+    // Serialization
+    // =====================================================================
 
     /// Build the complete Terraform JSON configuration.
     pub fn to_value(&self) -> Value {
@@ -256,6 +371,133 @@ impl ConfigExporter {
     pub fn export_to_file(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
         let mut file = std::fs::File::create(path)?;
         self.export_to_writer(&mut file)
+    }
+
+    // =====================================================================
+    // Validation
+    // =====================================================================
+
+    /// Write the config to a temporary directory and run `tofu validate`.
+    ///
+    /// Returns `Ok(validate_json_output)` on success, or an error if
+    /// `tofu init` or `tofu validate` fails.
+    pub fn validate(&self) -> Result<String, Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!("hello-tofu-validate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+
+        // Write the config
+        let config_path = dir.join("main.tf.json");
+        self.export_to_file(&config_path)?;
+
+        // tofu init
+        let init = Command::new("tofu")
+            .current_dir(&dir)
+            .args(["init"])
+            .output()?;
+        if !init.status.success() {
+            let stderr = String::from_utf8_lossy(&init.stderr);
+            return Err(format!("tofu init failed:\n{}", stderr).into());
+        }
+
+        // tofu validate -json
+        let validate = Command::new("tofu")
+            .current_dir(&dir)
+            .args(["validate", "-json"])
+            .output()?;
+
+        let stdout = String::from_utf8_lossy(&validate.stdout).to_string();
+
+        if !validate.status.success() {
+            let stderr = String::from_utf8_lossy(&validate.stderr);
+            return Err(format!(
+                "tofu validate failed:\nstdout: {}\nstderr: {}",
+                stdout, stderr
+            )
+            .into());
+        }
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&dir);
+
+        Ok(stdout)
+    }
+
+    /// Export to `path`, then run `tofu init` + `tofu validate` in the
+    /// directory containing the file.  Prints progress to stderr.
+    ///
+    /// This is a convenience wrapper combining [`export_to_file`] and
+    /// [`validate`] that operates in-place rather than using a temp dir.
+    pub fn export_and_validate(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let path = path.as_ref();
+        let dir = path.parent().unwrap_or(Path::new("."));
+        std::fs::create_dir_all(dir)?;
+
+        self.export_to_file(path)?;
+        eprintln!("Generated: {}", path.display());
+
+        eprintln!("Running tofu init …");
+        let init = Command::new("tofu")
+            .current_dir(dir)
+            .args(["init"])
+            .output()?;
+        if !init.status.success() {
+            let stderr = String::from_utf8_lossy(&init.stderr);
+            return Err(format!("tofu init failed:\n{}", stderr).into());
+        }
+        eprintln!("tofu init: OK");
+
+        eprintln!("Running tofu validate …");
+        let validate = Command::new("tofu")
+            .current_dir(dir)
+            .args(["validate", "-json"])
+            .output()?;
+
+        let stdout = String::from_utf8_lossy(&validate.stdout).to_string();
+
+        if !validate.status.success() {
+            let stderr = String::from_utf8_lossy(&validate.stderr);
+            return Err(format!(
+                "tofu validate failed:\nstdout: {}\nstderr: {}",
+                stdout, stderr
+            )
+            .into());
+        }
+        eprintln!("tofu validate: PASSED");
+
+        Ok(stdout)
+    }
+
+    // =====================================================================
+    // Internal helpers
+    // =====================================================================
+
+    fn insert_variable(&mut self, name: impl Into<String>, variable: Variable) {
+        let mut var_obj = Map::new();
+        if let Some(t) = variable.r#type {
+            var_obj.insert("type".to_string(), Value::String(t));
+        }
+        if let Some(d) = variable.default {
+            var_obj.insert("default".to_string(), d);
+        }
+        if let Some(desc) = variable.description {
+            var_obj.insert("description".to_string(), Value::String(desc));
+        }
+        self.variables.insert(name.into(), Value::Object(var_obj));
+    }
+
+    fn insert_output(&mut self, name: impl Into<String>, output: Output) {
+        let mut out_obj = Map::new();
+        out_obj.insert("value".to_string(), output.value);
+        if let Some(desc) = output.description {
+            out_obj.insert("description".to_string(), Value::String(desc));
+        }
+        if let Some(sensitive) = output.sensitive {
+            out_obj.insert("sensitive".to_string(), Value::Bool(sensitive));
+        }
+        self.outputs.insert(name.into(), Value::Object(out_obj));
     }
 }
 

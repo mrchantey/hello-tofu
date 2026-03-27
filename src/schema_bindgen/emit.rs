@@ -6,7 +6,7 @@
 //! Main changes are around supporting qualified names for Regitry entries as well
 //! as well as customing stubs generation.
 //!
-use crate::config::CodeGeneratorConfig;
+use crate::schema_bindgen::config::CodeGeneratorConfig;
 use serde_generate::indent::{IndentConfig, IndentedWriter};
 use serde_reflection::{ContainerFormat, Format, Named, VariantFormat};
 use std::borrow::Cow;
@@ -138,7 +138,10 @@ where
             .cloned()
             .flatten()
             .collect::<HashSet<_>>();
-        writeln!(self.out, "#![allow(unused_imports, non_snake_case, non_camel_case_types, non_upper_case_globals)]")?;
+        writeln!(
+            self.out,
+            "#![allow(unused_imports, non_snake_case, non_camel_case_types, non_upper_case_globals)]"
+        )?;
         if !external_names.contains("Map") {
             writeln!(self.out, "use std::collections::BTreeMap as Map;")?;
         }

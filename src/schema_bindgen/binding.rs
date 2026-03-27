@@ -1,5 +1,5 @@
-use crate::config::CodeGeneratorConfig;
-use crate::emit::{CodeGenerator, Registry};
+use crate::schema_bindgen::config::CodeGeneratorConfig;
+use crate::schema_bindgen::emit::{CodeGenerator, Registry};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_reflection::{ContainerFormat, Format, Named, VariantFormat};
@@ -44,6 +44,7 @@ pub const RESERVED_WORDS: [&str; 32] = [
     "box",
 ];
 
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 enum Void {}
 
@@ -87,7 +88,7 @@ pub enum StringKind {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Attribute {
-    r#type: AttributeType,
+    r#type: Option<AttributeType>,
     description: Option<String>,
     required: Option<bool>,
     optional: Option<bool>,
@@ -95,6 +96,8 @@ pub struct Attribute {
     sensitive: Option<bool>,
     description_kind: Option<StringKind>,
     deprecated: Option<bool>,
+    /// Present when the attribute uses an inline structural type instead of `type`.
+    nested_type: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -218,39 +221,56 @@ fn export_attributes(
             .map(|w| format!("r#{}", w))
             .unwrap_or_else(|| an.to_string());
 
+        // When `type` is absent the attribute uses `nested_type` (an inline
+        // structural definition).  Treat it as a map of strings for now.
         let f = match &at.r#type {
-            AttributeType(Value::String(t)) if t == "string" => Format::Str,
-            AttributeType(Value::String(t)) if t == "bool" => Format::Bool,
-            AttributeType(Value::String(t)) if t == "number" => Format::I64,
-            AttributeType(Value::String(t)) if t == "set" || t == "list" => {
+            Some(AttributeType(Value::String(t))) if t == "string" => Format::Str,
+            Some(AttributeType(Value::String(t))) if t == "bool" => Format::Bool,
+            Some(AttributeType(Value::String(t))) if t == "number" => Format::I64,
+            Some(AttributeType(Value::String(t))) if t == "set" || t == "list" => {
                 Format::Seq(Box::new(Format::Str))
             }
-            AttributeType(Value::String(t)) if t == "map" => Format::Map {
+            Some(AttributeType(Value::String(t))) if t == "map" => Format::Map {
                 key: Box::new(Format::Str),
                 value: Box::new(Format::Str),
             },
-            AttributeType(Value::String(t)) => {
+            // Terraform "dynamic" pseudo-type can hold any value; approximate as String.
+            Some(AttributeType(Value::String(t))) if t == "dynamic" => Format::Str,
+            Some(AttributeType(Value::String(t))) => {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     format!("Unknown type {}", t),
-                )))
+                )));
             }
-            AttributeType(Value::Array(t))
+            Some(AttributeType(Value::Array(t)))
                 if t.first().unwrap() == "set" || t.first().unwrap() == "list" =>
             {
                 Format::Seq(Box::new(Format::Str))
             }
             /* TODO: It will assume a map of strings even if the specified type is of a different kind (e.g. map of object) */
-            AttributeType(Value::Array(t)) if t.first().unwrap() == "map" => Format::Map {
+            Some(AttributeType(Value::Array(t))) if t.first().unwrap() == "map" => Format::Map {
                 key: Box::new(Format::Str),
                 value: Box::new(Format::Str),
             },
-            unknown => {
+            // ["object", {...}], ["tuple", [...]], or any other complex array
+            // type spec we don't fully model yet – approximate as a map of
+            // strings so code generation can proceed.
+            Some(AttributeType(Value::Array(_))) => Format::Map {
+                key: Box::new(Format::Str),
+                value: Box::new(Format::Str),
+            },
+            Some(unknown) => {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     format!("Type {:?} not supported", unknown),
-                )))
+                )));
             }
+            // `nested_type` attribute – no top-level `type` field.
+            // Approximate as a map of JSON strings for now.
+            None => Format::Map {
+                key: Box::new(Format::Str),
+                value: Box::new(Format::Str),
+            },
         };
         let attr_fmt = match (at.optional, at.computed) {
             (Some(opt), _) if opt => Format::Option(Box::new(f.clone())),
@@ -272,24 +292,24 @@ fn export_attributes(
 
 fn inject_meta_arguments(blk: &mut Block) {
     let depends_on_attr = Attribute {
-        r#type: AttributeType(serde_json::json!(["set"])),
+        r#type: Some(AttributeType(serde_json::json!(["set"]))),
         optional: Some(true),
         ..Default::default()
     };
     let count_attr = Attribute {
-        r#type: AttributeType(serde_json::json!("number")),
+        r#type: Some(AttributeType(serde_json::json!("number"))),
         optional: Some(true),
         ..Default::default()
     };
 
     let for_each_attr = Attribute {
-        r#type: AttributeType(serde_json::json!(["set"])),
+        r#type: Some(AttributeType(serde_json::json!(["set"]))),
         optional: Some(true),
         ..Default::default()
     };
 
     let provider_attr = Attribute {
-        r#type: AttributeType(serde_json::json!("string")),
+        r#type: Some(AttributeType(serde_json::json!("string"))),
         optional: Some(true),
         ..Default::default()
     };
@@ -364,7 +384,7 @@ fn export_block_type(
         inner_block_types.push((name, block_type_fqn));
     }
 
-    if let ContainerFormat::Struct(ref mut attrs) = cf {
+    if let ContainerFormat::Struct(attrs) = cf {
         for (_, (n, fqn)) in inner_block_types.iter().enumerate() {
             attrs.push(Named {
                 name: n.to_string(),
@@ -394,7 +414,9 @@ pub fn read_tf_schema_from_file<P: AsRef<Path>>(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_utils::{config, datasource_root, provider_root, resource_root};
+    use crate::schema_bindgen::test_utils::{
+        config, datasource_root, provider_root, resource_root,
+    };
     use std::fs::File;
     use std::process::Command;
     use tempfile::tempdir;
@@ -476,7 +498,7 @@ mod test {
     #[test]
     fn test_unmarshall_provider() {
         let res: config =
-            serde_json::from_str(include_str!("../tests/fixtures/provider_test.json")).unwrap();
+            serde_json::from_str(include_str!("../../tests/fixtures/provider_test.json")).unwrap();
         assert_eq!(res.provider.as_ref().map(|x| x.is_empty()), Some(false));
         assert_eq!(
             res.provider.as_ref().map(|x| x.get(0).is_none()),
@@ -499,7 +521,7 @@ mod test {
     #[test]
     fn test_unmarshall_resource() {
         let res: config =
-            serde_json::from_str(include_str!("../tests/fixtures/resource_test.json")).unwrap();
+            serde_json::from_str(include_str!("../../tests/fixtures/resource_test.json")).unwrap();
         assert_eq!(res.resource.as_ref().map(|x| x.is_empty()), Some(false));
         assert_eq!(
             res.resource.as_ref().map(|x| x.get(0).is_none()),
@@ -525,7 +547,8 @@ mod test {
     #[test]
     fn test_unmarshall_datasource() {
         let res: config =
-            serde_json::from_str(include_str!("../tests/fixtures/datasource_test.json")).unwrap();
+            serde_json::from_str(include_str!("../../tests/fixtures/datasource_test.json"))
+                .unwrap();
         assert_eq!(res.data.as_ref().map(|x| x.is_empty()), Some(false));
         assert_eq!(res.data.as_ref().map(|x| x.get(0).is_none()), Some(false));
         let res_a = res
@@ -548,7 +571,8 @@ mod test {
     #[test]
     fn test_unmarshall_block_type() {
         let res: config =
-            serde_json::from_str(include_str!("../tests/fixtures/block_type_test.json")).unwrap();
+            serde_json::from_str(include_str!("../../tests/fixtures/block_type_test.json"))
+                .unwrap();
         assert_eq!(res.data.as_ref().map(|x| x.is_empty()), Some(false));
         assert_eq!(res.data.as_ref().map(|x| x.get(0).is_none()), Some(false));
         let res_a = res

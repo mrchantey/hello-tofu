@@ -1,6 +1,7 @@
 use crate::schema_bindgen::config::CodeGeneratorConfig;
+use crate::schema_bindgen::config::DocComments;
 use crate::schema_bindgen::emit::{CodeGenerator, Registry};
-use crate::terra::{ResourceFilter, ResourceMeta};
+use crate::terra::{BindingFilter, ResourceMeta};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_reflection::{ContainerFormat, Format, Named, VariantFormat};
@@ -117,7 +118,7 @@ pub fn generate_serde(
     out: &mut dyn Write,
     registry: &Registry,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let config = CodeGeneratorConfig::new(config.to_string());
+    let config = CodeGeneratorConfig::new(config.to_string()).with_generate_roots(true);
 
     CodeGenerator::new(&config).output(out, registry)
 }
@@ -169,14 +170,17 @@ pub fn export_schema_to_registry(
 }
 
 /// Export only the resources that pass through `filter`, skipping root enums
-/// and the top-level `config` struct.  Returns both the registry and metadata
-/// about every generated resource (needed for trait-impl generation).
+/// and the top-level `config` struct (unless `filter.include_roots` is set).
+/// Returns the registry, metadata about every generated resource, and
+/// collected doc comments extracted from schema `description` fields.
 pub fn export_filtered_resources(
     schema: &TerraformSchemaExport,
-    filter: &ResourceFilter,
-) -> std::result::Result<(Registry, Vec<ResourceMeta>), Box<dyn std::error::Error>> {
+    filter: &BindingFilter,
+    module_name: &str,
+) -> std::result::Result<(Registry, Vec<ResourceMeta>, DocComments), Box<dyn std::error::Error>> {
     let mut registry = Registry::new();
     let mut meta = Vec::new();
+    let mut comments = DocComments::new();
 
     for (provider_source, provider_schema) in &schema.provider_schemas {
         if !filter.has_provider(provider_source) {
@@ -191,6 +195,10 @@ pub fn export_filtered_resources(
 
                 let mut block = schema_item.block.clone();
                 inject_meta_arguments(&mut block);
+
+                let container_name = format!("{}_details", resource_name);
+                collect_descriptions(module_name, &container_name, &block, &mut comments);
+
                 export_block(
                     Some("resource".to_owned()),
                     resource_name,
@@ -198,19 +206,16 @@ pub fn export_filtered_resources(
                     &mut registry,
                 )?;
 
-                // The struct name mirrors what export_block inserts.
-                let struct_name = format!("{}_details", resource_name);
-
                 meta.push(ResourceMeta {
                     resource_type: resource_name.clone(),
                     provider_source: provider_source.clone(),
-                    struct_name,
+                    struct_name: container_name,
                 });
             }
         }
     }
 
-    Ok((registry, meta))
+    Ok((registry, meta, comments))
 }
 
 fn generate_config(roots: &BTreeMap<&str, Vec<&str>>, reg: &mut Registry) {
@@ -253,6 +258,40 @@ fn export_roots(roots: &BTreeMap<&str, Vec<&str>>, reg: &mut Registry) {
             (None, format!("{}_root", root_name.to_owned())),
             ContainerFormat::Enum(enumz),
         );
+    }
+}
+
+/// Walk a block and collect `description` values into the doc comments map.
+///
+/// Keys are `[module_name, container_name, field_name]` to match the format
+/// expected by `RustEmitter::output_comment`.
+fn collect_descriptions(
+    module_name: &str,
+    container_name: &str,
+    block: &Block,
+    comments: &mut DocComments,
+) {
+    if let Some(attrs) = &block.attributes {
+        for (attr_name, attr) in attrs {
+            if let Some(desc) = &attr.description {
+                if !desc.is_empty() {
+                    let key = vec![
+                        module_name.to_string(),
+                        container_name.to_string(),
+                        attr_name.clone(),
+                    ];
+                    comments.insert(key, desc.clone());
+                }
+            }
+        }
+    }
+
+    if let Some(block_types) = &block.block_types {
+        for (bt_name, nested) in block_types {
+            // Build the nested container name the same way export_block_type does.
+            let nested_container = format!("{}_block_type_{}", container_name, bt_name);
+            collect_descriptions(module_name, &nested_container, &nested.block, comments);
+        }
     }
 }
 

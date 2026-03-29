@@ -1,6 +1,9 @@
+#[cfg(feature = "bindings_generator")]
 pub mod binding_generator;
 pub mod config_exporter;
-pub mod config_generator;
 pub mod providers;
+#[cfg(feature = "bindings_generator")]
 pub mod schema_bindgen;
+#[cfg(feature = "bindings_generator")]
+pub mod schema_binding_generator;
 pub mod terra;

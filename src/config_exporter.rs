@@ -18,14 +18,14 @@
 //!
 //! # Untyped API
 //!
-//! The original `add_resource` / `add_provider` methods that accept raw
+//! The `add_untyped_resource` / `add_untyped_provider` methods that accept raw
 //! `serde_json::Value` or any `Serialize` type are still available for
 //! escape-hatch usage and backward compatibility.
 
 use crate::terra::{TerraProvider, TerraResource};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
-use std::collections::HashSet;
+
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
@@ -72,8 +72,8 @@ pub struct Output {
 /// ```rust,ignore
 /// let mut exporter = ConfigExporter::new();
 /// exporter.add_required_provider("aws", "hashicorp/aws", "~> 6.0");
-/// exporter.add_provider("aws", &serde_json::json!({"region": "us-west-2"}))?;
-/// exporter.add_resource("aws_instance", "web", &my_instance)?;
+/// exporter.add_untyped_provider("aws", &serde_json::json!({"region": "us-west-2"}))?;
+/// exporter.add_untyped_resource("aws_instance", "web", &my_instance)?;
 /// exporter.export_to_file("main.tf.json")?;
 /// ```
 pub struct ConfigExporter {
@@ -84,9 +84,6 @@ pub struct ConfigExporter {
     variables: Map<String, Value>,
     outputs: Map<String, Value>,
     locals: Map<String, Value>,
-
-    /// Providers that have been auto-registered via the typed API.
-    auto_providers: HashSet<String>,
 }
 
 impl ConfigExporter {
@@ -100,7 +97,6 @@ impl ConfigExporter {
             variables: Map::new(),
             outputs: Map::new(),
             locals: Map::new(),
-            auto_providers: HashSet::new(),
         }
     }
 
@@ -130,7 +126,7 @@ impl ConfigExporter {
     }
 
     /// Add a typed resource via mutable reference (non-chaining variant).
-    pub fn add_typed_resource(
+    pub fn add_resource(
         &mut self,
         name: impl Into<String>,
         resource: &dyn TerraResource,
@@ -192,17 +188,16 @@ impl ConfigExporter {
     /// hasn't been registered yet.
     fn ensure_provider(&mut self, provider: &TerraProvider) {
         let local = provider.local_name().to_string();
-        if self.auto_providers.contains(&local) {
+        if self.required_providers.contains_key(&local) {
             return;
         }
         self.required_providers.insert(
-            local.clone(),
+            local,
             json!({
                 "source": provider.short_source(),
                 "version": provider.version.as_ref(),
             }),
         );
-        self.auto_providers.insert(local);
     }
 
     // =====================================================================
@@ -222,7 +217,7 @@ impl ConfigExporter {
     }
 
     /// Add a provider configuration block.
-    pub fn add_provider(
+    pub fn add_untyped_provider(
         &mut self,
         name: &str,
         config: &impl Serialize,
@@ -233,7 +228,7 @@ impl ConfigExporter {
     }
 
     /// Add a resource block.
-    pub fn add_resource(
+    pub fn add_untyped_resource(
         &mut self,
         resource_type: &str,
         name: &str,

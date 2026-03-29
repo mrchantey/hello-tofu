@@ -1,19 +1,19 @@
 //! Generate typed Terraform provider bindings from schema.json.
 //!
 //! Run with:
-//!     cargo run --example generate
+//!     cargo run --example generate --features bindings_generator
 //!
 //! This reads the existing `schema.json` (produced by `tofu providers schema -json`)
 //! and generates filtered, TitleCase Rust modules under `src/providers/`.
 
-use hello_tofu::config_generator::{ConfigGenerator, TerraProviderGenerator};
+use hello_tofu::schema_binding_generator::{ProviderBindingTarget, SchemaBindingGenerator};
 use hello_tofu::terra::TerraProvider;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let generator = ConfigGenerator::default()
+    let generator = SchemaBindingGenerator::default()
         // AWS resources used by examples/lambda.rs
         .with_resources(
-            TerraProviderGenerator::new(TerraProvider::AWS, "src/providers/aws_lambda.rs"),
+            ProviderBindingTarget::new(TerraProvider::AWS, "src/providers/aws_lambda.rs"),
             [
                 "aws_api_gateway_rest_api",
                 "aws_apigatewayv2_api",
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         // AWS resources used by examples/lightsail.rs
         .with_resources(
-            TerraProviderGenerator::new(TerraProvider::AWS, "src/providers/aws_lightsail.rs"),
+            ProviderBindingTarget::new(TerraProvider::AWS, "src/providers/aws_lightsail.rs"),
             [
                 "aws_lightsail_instance",
                 "aws_lightsail_instance_public_ports",
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         // Cloudflare resources used by examples/lambda.rs
         .with_resources(
-            TerraProviderGenerator::new(
+            ProviderBindingTarget::new(
                 TerraProvider::CLOUDFLARE,
                 "src/providers/cloudflare_dns.rs",
             ),

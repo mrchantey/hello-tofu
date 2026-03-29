@@ -1,6 +1,6 @@
-//! Roundtrip binding generator.
+//! Roundtrip schema + binding generator.
 //!
-//! [`ConfigGenerator`] orchestrates the full workflow:
+//! [`SchemaBindingGenerator`] orchestrates the full workflow:
 //!
 //! 1. Write a `providers.tf.json` declaring the required providers.
 //! 2. Run `tofu init` to download provider plugins.
@@ -16,11 +16,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 // ---------------------------------------------------------------------------
-// TerraProviderGenerator — per-provider output configuration
+// ProviderBindingTarget — per-provider output configuration
 // ---------------------------------------------------------------------------
 
 /// Pairs a [`TerraProvider`] with the output path for its generated bindings.
-pub struct TerraProviderGenerator {
+///
+/// This is a configuration struct — it does not generate anything on its own.
+/// Pass it to [`SchemaBindingGenerator::with_resources`] to register which
+/// provider resources should be generated and where the output should be
+/// written.
+pub struct ProviderBindingTarget {
     /// The provider to generate bindings for.
     pub provider: TerraProvider,
     /// Destination file path (relative to the crate root), e.g.
@@ -28,7 +33,7 @@ pub struct TerraProviderGenerator {
     pub path: PathBuf,
 }
 
-impl TerraProviderGenerator {
+impl ProviderBindingTarget {
     pub fn new(provider: TerraProvider, path: impl Into<PathBuf>) -> Self {
         Self {
             provider,
@@ -38,51 +43,64 @@ impl TerraProviderGenerator {
 }
 
 // ---------------------------------------------------------------------------
-// ConfigGenerator
+// SchemaBindingGenerator
 // ---------------------------------------------------------------------------
 
 /// Orchestrates the full roundtrip: providers → tofu init → schema → codegen.
 ///
+/// Holds a [`BindingGenerator`] that can be customised before generation.
+/// The binding generator's [`CodeGeneratorConfig`] controls all code-generation
+/// options (title case, builders, trait impls, preamble, etc.).
+///
 /// # Example
 ///
 /// ```rust,ignore
-/// ConfigGenerator::default()
+/// SchemaBindingGenerator::default()
 ///     .with_resources(
-///         TerraProviderGenerator::new(TerraProvider::AWS, "src/providers/aws_lambda.rs"),
+///         ProviderBindingTarget::new(TerraProvider::AWS, "src/providers/aws_lambda.rs"),
 ///         ["aws_lambda_function", "aws_s3_bucket"],
 ///     )
 ///     .with_resources(
-///         TerraProviderGenerator::new(TerraProvider::CLOUDFLARE, "src/providers/cloudflare_dns.rs"),
+///         ProviderBindingTarget::new(TerraProvider::CLOUDFLARE, "src/providers/cloudflare_dns.rs"),
 ///         ["cloudflare_dns_record"],
 ///     )
 ///     .generate()?;
 /// ```
-pub struct ConfigGenerator {
-    /// Each entry maps a provider generator to its list of resource type names.
-    targets: Vec<(TerraProviderGenerator, Vec<String>)>,
+pub struct SchemaBindingGenerator {
+    /// Each entry maps a provider binding target to its list of resource type names.
+    targets: Vec<(ProviderBindingTarget, Vec<String>)>,
     /// Working directory for tofu operations.  Defaults to
     /// `target/terra-bindings-generator`.
     work_dir: PathBuf,
+    /// The binding generator used for each target.  Users can pre-configure
+    /// this to control code-generation options; per-target filter and preamble
+    /// are applied automatically on top.
+    binding_generator: BindingGenerator,
 }
 
-impl Default for ConfigGenerator {
+impl Default for SchemaBindingGenerator {
     fn default() -> Self {
         Self {
             targets: Vec::new(),
             work_dir: PathBuf::from("target/terra-bindings-generator"),
+            binding_generator: BindingGenerator::new()
+                .with_title_case(true)
+                .with_builders(true)
+                .with_trait_impls(true)
+                .with_custom_preamble(build_preamble()),
         }
     }
 }
 
-impl ConfigGenerator {
+impl SchemaBindingGenerator {
     /// Add a provider and its resource list.
     pub fn with_resources(
         mut self,
-        generator: TerraProviderGenerator,
+        target: ProviderBindingTarget,
         resources: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         let resources: Vec<String> = resources.into_iter().map(Into::into).collect();
-        self.targets.push((generator, resources));
+        self.targets.push((target, resources));
         self
     }
 
@@ -90,6 +108,26 @@ impl ConfigGenerator {
     pub fn with_work_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.work_dir = dir.into();
         self
+    }
+
+    /// Replace the [`BindingGenerator`] used for code generation.
+    ///
+    /// The filter and custom preamble are still set per-target automatically;
+    /// everything else (title case, builders, trait impls, etc.) comes from
+    /// the generator you supply here.
+    pub fn with_binding_generator(mut self, generator: BindingGenerator) -> Self {
+        self.binding_generator = generator;
+        self
+    }
+
+    /// Return a shared reference to the current [`BindingGenerator`].
+    pub fn binding_generator(&self) -> &BindingGenerator {
+        &self.binding_generator
+    }
+
+    /// Return a mutable reference to the current [`BindingGenerator`].
+    pub fn binding_generator_mut(&mut self) -> &mut BindingGenerator {
+        &mut self.binding_generator
     }
 
     /// Run the full generation pipeline.
@@ -137,8 +175,8 @@ impl ConfigGenerator {
     fn write_providers_tf(&self) -> Result<(), Box<dyn std::error::Error>> {
         let mut required_providers = serde_json::Map::new();
 
-        for (pg, _) in &self.targets {
-            let p = &pg.provider;
+        for (target, _) in &self.targets {
+            let p = &target.provider;
             // Deduplicate by local name.
             let local = p.local_name().to_string();
             if required_providers.contains_key(&local) {
@@ -164,13 +202,13 @@ impl ConfigGenerator {
         serde_json::to_writer_pretty(&mut f, &tf_json)?;
         f.write_all(b"\n")?;
 
-        eprintln!("[config_generator] wrote {}", path.display());
+        eprintln!("[schema_binding_generator] wrote {}", path.display());
         Ok(())
     }
 
     fn run_tofu_init(&self) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!(
-            "[config_generator] running tofu init in {}",
+            "[schema_binding_generator] running tofu init in {}",
             self.work_dir.display()
         );
         let output = Command::new("tofu")
@@ -182,14 +220,14 @@ impl ConfigGenerator {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!("tofu init failed:\n{}", stderr).into());
         }
-        eprintln!("[config_generator] tofu init: OK");
+        eprintln!("[schema_binding_generator] tofu init: OK");
         Ok(())
     }
 
     fn run_tofu_schema(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let schema_path = self.work_dir.join("schema.json");
         eprintln!(
-            "[config_generator] running tofu providers schema → {}",
+            "[schema_binding_generator] running tofu providers schema → {}",
             schema_path.display()
         );
 
@@ -205,7 +243,7 @@ impl ConfigGenerator {
 
         std::fs::write(&schema_path, &output.stdout)?;
         eprintln!(
-            "[config_generator] schema exported ({:.1} MB)",
+            "[schema_binding_generator] schema exported ({:.1} MB)",
             output.stdout.len() as f64 / 1_048_576.0
         );
         Ok(schema_path)
@@ -214,31 +252,20 @@ impl ConfigGenerator {
     fn generate_bindings(&self, schema_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let schema = BindingGenerator::read_schema(schema_path)?;
 
-        // Group targets by provider source so we can build a combined filter
-        // per output file.  Usually there's one provider per file.
-        //
-        // target_index → (output_path, filter, provider_source)
-        // We iterate targets in order and generate each one.
-        for (pg, resources) in &self.targets {
-            let filter = crate::terra::ResourceFilter::default()
-                .with_resources(pg.provider.source.as_ref(), resources.clone());
+        for (target, resources) in &self.targets {
+            let filter = crate::terra::BindingFilter::default()
+                .with_resources(target.provider.source.as_ref(), resources.clone());
 
-            let preamble = build_preamble();
-
-            let binding_gen = BindingGenerator::new()
-                .with_filter(filter)
-                .with_title_case(true)
-                .with_builders(true)
-                .with_trait_impls(true)
-                .with_custom_preamble(preamble);
+            // Clone the base binding generator and apply the per-target filter.
+            let binding_gen = self.binding_generator.clone().with_filter(filter);
 
             // Ensure the parent directory exists.
-            if let Some(parent) = pg.path.parent() {
+            if let Some(parent) = target.path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
 
-            binding_gen.generate_to_file(&schema, &pg.path)?;
-            eprintln!("[config_generator] wrote {}", pg.path.display());
+            binding_gen.generate_to_file(&schema, &target.path)?;
+            eprintln!("[schema_binding_generator] wrote {}", target.path.display());
         }
 
         Ok(())

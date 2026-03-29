@@ -4,8 +4,11 @@
 //! Main changes from upstream:
 //! - Qualified names (`(Option<String>, String)`) for Registry entries
 //! - Smart `Default` derive: only added when **all** fields are optional
+//!   (or when `generate_default` is enabled in the config)
 //! - Optional `UpperCamelCase` conversion for generated type names (via `heck`)
-//! - Custom stub generation
+//! - Inline builder (`new()`) generation for structs with required fields
+//! - Inline `TerraResource` / `TerraJson` trait impl generation
+//! - Custom preamble support
 //!
 
 use crate::schema_bindgen::config::CodeGeneratorConfig;
@@ -123,8 +126,24 @@ impl<'a> CodeGenerator<'a> {
         };
 
         emitter.output_preamble()?;
+
         for ((ns, name), format) in registry {
             emitter.output_container(ns, name, format)?;
+
+            // After emitting a struct, optionally emit builder and trait impls
+            // inline — no post-processing string surgery needed.
+            if let ContainerFormat::Struct(fields) = format {
+                let struct_name = emitter.resolve_struct_name(ns, name);
+
+                if self.config.generate_builders {
+                    emitter.output_builder_impl(&struct_name, fields)?;
+                }
+
+                if self.config.generate_trait_impls {
+                    emitter.output_trait_impls(&struct_name)?;
+                }
+            }
+
             emitter.known_sizes.to_mut().insert(name);
         }
         Ok(())
@@ -187,6 +206,16 @@ where
         result
     }
 
+    /// Compute the final struct name for a given registry entry, applying
+    /// namespace prefixing and title-case conversion as appropriate.
+    fn resolve_struct_name(&self, namespace: &Option<String>, name: &str) -> String {
+        let raw = match namespace {
+            Some(ns) => format!("{}_{}", ns, name),
+            None => name.to_string(),
+        };
+        self.rename_type(&raw)
+    }
+
     // ------------------------------------------------------------------
     // Output helpers
     // ------------------------------------------------------------------
@@ -202,6 +231,14 @@ where
     }
 
     fn output_preamble(&mut self) -> Result<()> {
+        // When a custom preamble is configured, use it verbatim instead of
+        // the built-in default.
+        if let Some(preamble) = &self.generator.config.custom_preamble {
+            writeln!(self.out, "{}", preamble)?;
+            writeln!(self.out)?;
+            return Ok(());
+        }
+
         let external_names = self
             .generator
             .config
@@ -443,10 +480,9 @@ where
                 )
             }
             Struct(fields) => {
-                // Smart Default: only derive Default when every field is
-                // optional – structs with required fields get a generated
-                // `new()` constructor instead.
-                if Self::all_fields_optional(fields) {
+                // Smart Default: derive Default when every field is optional,
+                // OR when the config forces it via `generate_default`.
+                if Self::all_fields_optional(fields) || self.generator.config.generate_default {
                     derive_macros.push("Default".to_string());
                 }
 
@@ -501,5 +537,204 @@ where
                 writeln!(self.out, "}}\n")
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Inline builder generation
+    // ------------------------------------------------------------------
+
+    /// Emit an `impl StructName { pub fn new(…) -> Self { … } }` block for
+    /// a struct that has at least one required (non-`Option`) field.
+    ///
+    /// When every field is optional, nothing is emitted (the struct already
+    /// derives `Default`).
+    fn output_builder_impl(&mut self, struct_name: &str, fields: &[Named<Format>]) -> Result<()> {
+        let required_fields: Vec<_> = fields
+            .iter()
+            .filter(|f| !is_optional_format(&f.value))
+            .collect();
+
+        // Nothing to do when every field is already optional.
+        if required_fields.is_empty() {
+            return Ok(());
+        }
+
+        let use_title_case = self.generator.config.use_title_case;
+
+        // Build the parameter list from required fields only.
+        let params: Vec<String> = required_fields
+            .iter()
+            .map(|f| format!("{}: {}", f.name, format_to_type(&f.value, use_title_case)))
+            .collect();
+
+        writeln!(self.out, "impl {} {{", struct_name)?;
+        writeln!(self.out, "    pub fn new({}) -> Self {{", params.join(", "))?;
+        writeln!(self.out, "        Self {{")?;
+
+        for field in fields {
+            if is_optional_format(&field.value) {
+                writeln!(
+                    self.out,
+                    "            {}: {},",
+                    field.name,
+                    default_value_for(&field.value)
+                )?;
+            } else {
+                writeln!(self.out, "            {},", field.name)?;
+            }
+        }
+
+        writeln!(self.out, "        }}")?;
+        writeln!(self.out, "    }}")?;
+        writeln!(self.out, "}}\n")?;
+
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Inline trait impl generation
+    // ------------------------------------------------------------------
+
+    /// Emit `TerraJson` and `TerraResource` trait implementations for
+    /// `struct_name` if it appears in the config's `resource_meta`.
+    fn output_trait_impls(&mut self, struct_name: &str) -> Result<()> {
+        let meta = &self.generator.config.resource_meta;
+
+        // Find the matching meta entry.  The struct_name we receive is the
+        // final (possibly title-cased) name, so compare against the
+        // (also possibly renamed) meta struct_name.
+        let matching = meta.iter().find(|m| {
+            let meta_name = if self.generator.config.use_title_case {
+                m.struct_name.to_upper_camel_case()
+            } else {
+                m.struct_name.clone()
+            };
+            meta_name == struct_name
+        });
+
+        let m = match matching {
+            Some(m) => m,
+            None => return Ok(()),
+        };
+
+        let provider_const = provider_source_to_const(&m.provider_source);
+
+        // TerraJson impl
+        writeln!(
+            self.out,
+            "impl crate::terra::TerraJson for {} {{",
+            struct_name
+        )?;
+        writeln!(self.out, "    fn to_json(&self) -> serde_json::Value {{")?;
+        writeln!(
+            self.out,
+            "        serde_json::to_value(self).expect(\"serialization should not fail\")"
+        )?;
+        writeln!(self.out, "    }}")?;
+        writeln!(self.out, "}}\n")?;
+
+        // TerraResource impl
+        writeln!(
+            self.out,
+            "impl crate::terra::TerraResource for {} {{",
+            struct_name
+        )?;
+        writeln!(
+            self.out,
+            "    fn resource_type(&self) -> &'static str {{ \"{}\" }}",
+            m.resource_type
+        )?;
+        writeln!(
+            self.out,
+            "    fn provider(&self) -> &'static crate::terra::TerraProvider {{ &crate::terra::TerraProvider::{} }}",
+            provider_const
+        )?;
+        writeln!(self.out, "}}\n")?;
+
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
+/// Map a provider source string to the `TerraProvider` constant name.
+fn provider_source_to_const(source: &str) -> String {
+    let provider_name = source.split('/').last().unwrap_or("unknown");
+    provider_name.to_uppercase()
+}
+
+/// Returns `true` when the format represents an `Option<T>` field.
+fn is_optional_format(format: &Format) -> bool {
+    matches!(format, Format::Option(_))
+}
+
+/// Map a `serde_reflection::Format` to its Rust source-level type string.
+///
+/// This is used by the builder generator and intentionally mirrors the
+/// `quote_type` logic but operates without an emitter reference.
+fn format_to_type(format: &Format, title_case: bool) -> String {
+    match format {
+        Format::TypeName(name) => {
+            if title_case {
+                name.to_upper_camel_case()
+            } else {
+                name.clone()
+            }
+        }
+        Format::Unit => "()".to_string(),
+        Format::Bool => "bool".to_string(),
+        Format::I8 => "i8".to_string(),
+        Format::I16 => "i16".to_string(),
+        Format::I32 => "i32".to_string(),
+        Format::I64 => "i64".to_string(),
+        Format::I128 => "i128".to_string(),
+        Format::U8 => "u8".to_string(),
+        Format::U16 => "u16".to_string(),
+        Format::U32 => "u32".to_string(),
+        Format::U64 => "u64".to_string(),
+        Format::U128 => "u128".to_string(),
+        Format::F32 => "f32".to_string(),
+        Format::F64 => "f64".to_string(),
+        Format::Char => "char".to_string(),
+        Format::Str => "String".to_string(),
+        Format::Bytes => "Bytes".to_string(),
+        Format::Option(inner) => format!("Option<{}>", format_to_type(inner, title_case)),
+        Format::Seq(inner) => format!("Vec<{}>", format_to_type(inner, title_case)),
+        Format::Map { key, value } => {
+            format!(
+                "Map<{}, {}>",
+                format_to_type(key, title_case),
+                format_to_type(value, title_case)
+            )
+        }
+        Format::Tuple(formats) => {
+            let types: Vec<_> = formats
+                .iter()
+                .map(|f| format_to_type(f, title_case))
+                .collect();
+            format!("({})", types.join(", "))
+        }
+        Format::TupleArray { content, size } => {
+            format!("[{}; {}]", format_to_type(content, title_case), size)
+        }
+        Format::Variable(_) => panic!("unexpected variable format in type conversion"),
+    }
+}
+
+/// Return a Rust expression that produces the natural default value for a
+/// given format (used for optional fields in generated constructors).
+fn default_value_for(format: &Format) -> String {
+    match format {
+        Format::Option(_) => "None".to_string(),
+        Format::Seq(_) => "Vec::new()".to_string(),
+        Format::Str => "String::new()".to_string(),
+        Format::Bool => "false".to_string(),
+        Format::I8 | Format::I16 | Format::I32 | Format::I64 | Format::I128 => "0".to_string(),
+        Format::U8 | Format::U16 | Format::U32 | Format::U64 | Format::U128 => "0".to_string(),
+        Format::F32 | Format::F64 => "0.0".to_string(),
+        Format::Map { .. } => "Map::new()".to_string(),
+        _ => "Default::default()".to_string(),
     }
 }

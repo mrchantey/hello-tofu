@@ -13,11 +13,12 @@ textwrap = "0.16"
 heck = "0.5"
 
 [dev-dependencies]
-hello-tofu = {path =".", features=["providers_aws_lambda", "providers_aws_lightsail","providers_cloudflare_dns"]}
+hello-tofu = {path =".", features=["bindings_generator", "providers_aws_lambda", "providers_aws_lightsail","providers_cloudflare_dns"]}
 tempfile = "3"
 
 [features]
 default = []
+bindings_generator = []
 providers_aws_lambda = []
 providers_aws_lightsail = []
 providers_cloudflare_dns = []
@@ -35,3 +36,4 @@ required-features = ["providers_aws_lambda", "providers_cloudflare_dns"]
 [[example]]
 name = "generate"
 path = "examples/generate.rs"
+required-features = ["bindings_generator"]

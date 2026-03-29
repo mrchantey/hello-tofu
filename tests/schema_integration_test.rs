@@ -12,10 +12,7 @@ fn test_generate_bindings_from_real_schema() {
     let schema =
         BindingGenerator::read_schema("./schema.json").expect("Failed to read schema.json");
 
-    let generator = BindingGenerator {
-        generate_builders: true,
-        ..Default::default()
-    };
+    let generator = BindingGenerator::new().with_builders(true);
 
     // Generate bindings to a string
     let code = generator

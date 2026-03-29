@@ -102,7 +102,7 @@ pub trait TerraResource: TerraJson {
 }
 
 // ---------------------------------------------------------------------------
-// ResourceFilter
+// BindingFilter
 // ---------------------------------------------------------------------------
 
 /// Selects which resources to include when parsing a provider schema.
@@ -112,7 +112,7 @@ pub trait TerraResource: TerraJson {
 /// your project actually needs.
 ///
 /// ```ignore
-/// let filter = ResourceFilter::default()
+/// let filter = BindingFilter::default()
 ///     .with_resources("registry.opentofu.org/hashicorp/aws", [
 ///         "aws_lambda_function",
 ///         "aws_s3_bucket",
@@ -121,12 +121,24 @@ pub trait TerraResource: TerraJson {
 ///         "cloudflare_dns_record",
 ///     ]);
 /// ```
-#[derive(Clone, Debug, Default)]
-pub struct ResourceFilter {
+#[derive(Clone, Debug)]
+pub struct BindingFilter {
     filters: HashMap<String, HashSet<String>>,
+    /// When `true`, root enum types and the config struct are generated even
+    /// when a filter is active.  Defaults to `false`.
+    pub include_roots: bool,
 }
 
-impl ResourceFilter {
+impl Default for BindingFilter {
+    fn default() -> Self {
+        Self {
+            filters: HashMap::new(),
+            include_roots: false,
+        }
+    }
+}
+
+impl BindingFilter {
     /// Add a set of resource type names for a given provider source.
     ///
     /// Can be called multiple times – resources are accumulated.
@@ -139,6 +151,13 @@ impl ResourceFilter {
             .entry(provider.into())
             .or_default()
             .extend(resources.into_iter().map(Into::into));
+        self
+    }
+
+    /// Set whether root enum types and the config struct should be generated
+    /// when a filter is active.
+    pub fn with_include_roots(mut self, include: bool) -> Self {
+        self.include_roots = include;
         self
     }
 
@@ -222,14 +241,14 @@ mod tests {
 
     #[test]
     fn resource_filter_empty_allows_all() {
-        let f = ResourceFilter::default();
+        let f = BindingFilter::default();
         assert!(f.is_empty());
         assert!(f.allows("any_provider", "any_resource"));
     }
 
     #[test]
     fn resource_filter_restricts() {
-        let f = ResourceFilter::default().with_resources(
+        let f = BindingFilter::default().with_resources(
             "registry.opentofu.org/hashicorp/aws",
             ["aws_s3_bucket", "aws_lambda_function"],
         );
@@ -245,7 +264,7 @@ mod tests {
 
     #[test]
     fn resource_filter_accumulates() {
-        let f = ResourceFilter::default()
+        let f = BindingFilter::default()
             .with_resources("p1", ["r1"])
             .with_resources("p1", ["r2"])
             .with_resources("p2", ["r3"]);

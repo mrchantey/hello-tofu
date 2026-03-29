@@ -4,6 +4,7 @@
 use std::collections::BTreeMap as Map;
 use serde::{Serialize, Deserialize};
 use serde_json;
+
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct AwsLightsailInstanceDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,6 +45,8 @@ pub struct AwsLightsailInstanceDetails {
     pub public_ip_address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ram_size: Option<i64>,
+
+    /// Region where this resource will be [managed](https://docs.aws.amazon.com/general/latest/gr/rande.html#regional-endpoints). Defaults to the Region set in the [provider configuration](https://registry.terraform.io/providers/hashicorp/aws/latest/docs#aws-configuration-reference).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,136 +59,6 @@ pub struct AwsLightsailInstanceDetails {
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub add_on: Option<Vec<AwsLightsailInstanceResourceBlockTypeAddOn>>,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct AwsLightsailInstancePublicPortsDetails {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub count: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub depends_on: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub for_each: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub instance_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub region: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub port_info: Option<Vec<AwsLightsailInstancePublicPortsResourceBlockTypePortInfo>>,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default)]
-pub struct AwsLightsailKeyPairDetails {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub arn: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub count: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub depends_on: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub encrypted_fingerprint: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub encrypted_private_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fingerprint: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub for_each: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name_prefix: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pgp_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub private_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub public_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub region: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags: Option<Map<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags_all: Option<Map<String, String>>,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct AwsLightsailStaticIpAttachmentDetails {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub count: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub depends_on: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub for_each: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub instance_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ip_address: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub region: Option<String>,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub static_ip_name: String,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct AwsLightsailStaticIpDetails {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub arn: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub count: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub depends_on: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub for_each: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ip_address: Option<String>,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub region: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub support_code: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(rename = "port_info")]
-pub struct AwsLightsailInstancePublicPortsResourceBlockTypePortInfo {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cidr_list_aliases: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cidrs: Option<Vec<String>>,
-    pub from_port: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ipv6_cidrs: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub protocol: String,
-    pub to_port: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(rename = "add_on")]
-pub struct AwsLightsailInstanceResourceBlockTypeAddOn {
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub snapshot_time: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub status: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub r#type: String,
 }
 
 impl AwsLightsailInstanceDetails {
@@ -220,6 +93,39 @@ impl AwsLightsailInstanceDetails {
     }
 }
 
+impl crate::terra::TerraJson for AwsLightsailInstanceDetails {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("serialization should not fail")
+    }
+}
+
+impl crate::terra::TerraResource for AwsLightsailInstanceDetails {
+    fn resource_type(&self) -> &'static str { "aws_lightsail_instance" }
+    fn provider(&self) -> &'static crate::terra::TerraProvider { &crate::terra::TerraProvider::AWS }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct AwsLightsailInstancePublicPortsDetails {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub for_each: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub instance_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+
+    /// Region where this resource will be [managed](https://docs.aws.amazon.com/general/latest/gr/rande.html#regional-endpoints). Defaults to the Region set in the [provider configuration](https://registry.terraform.io/providers/hashicorp/aws/latest/docs#aws-configuration-reference).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_info: Option<Vec<AwsLightsailInstancePublicPortsResourceBlockTypePortInfo>>,
+}
+
 impl AwsLightsailInstancePublicPortsDetails {
     pub fn new(instance_name: String) -> Self {
         Self {
@@ -233,6 +139,92 @@ impl AwsLightsailInstancePublicPortsDetails {
             port_info: None,
         }
     }
+}
+
+impl crate::terra::TerraJson for AwsLightsailInstancePublicPortsDetails {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("serialization should not fail")
+    }
+}
+
+impl crate::terra::TerraResource for AwsLightsailInstancePublicPortsDetails {
+    fn resource_type(&self) -> &'static str { "aws_lightsail_instance_public_ports" }
+    fn provider(&self) -> &'static crate::terra::TerraProvider { &crate::terra::TerraProvider::AWS }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default)]
+pub struct AwsLightsailKeyPairDetails {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_private_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub for_each: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_prefix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pgp_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
+
+    /// Region where this resource will be [managed](https://docs.aws.amazon.com/general/latest/gr/rande.html#regional-endpoints). Defaults to the Region set in the [provider configuration](https://registry.terraform.io/providers/hashicorp/aws/latest/docs#aws-configuration-reference).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Map<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags_all: Option<Map<String, String>>,
+}
+
+impl crate::terra::TerraJson for AwsLightsailKeyPairDetails {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("serialization should not fail")
+    }
+}
+
+impl crate::terra::TerraResource for AwsLightsailKeyPairDetails {
+    fn resource_type(&self) -> &'static str { "aws_lightsail_key_pair" }
+    fn provider(&self) -> &'static crate::terra::TerraProvider { &crate::terra::TerraProvider::AWS }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct AwsLightsailStaticIpAttachmentDetails {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub for_each: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub instance_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ip_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+
+    /// Region where this resource will be [managed](https://docs.aws.amazon.com/general/latest/gr/rande.html#regional-endpoints). Defaults to the Region set in the [provider configuration](https://registry.terraform.io/providers/hashicorp/aws/latest/docs#aws-configuration-reference).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub static_ip_name: String,
 }
 
 impl AwsLightsailStaticIpAttachmentDetails {
@@ -249,6 +241,43 @@ impl AwsLightsailStaticIpAttachmentDetails {
             static_ip_name,
         }
     }
+}
+
+impl crate::terra::TerraJson for AwsLightsailStaticIpAttachmentDetails {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("serialization should not fail")
+    }
+}
+
+impl crate::terra::TerraResource for AwsLightsailStaticIpAttachmentDetails {
+    fn resource_type(&self) -> &'static str { "aws_lightsail_static_ip_attachment" }
+    fn provider(&self) -> &'static crate::terra::TerraProvider { &crate::terra::TerraProvider::AWS }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct AwsLightsailStaticIpDetails {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub for_each: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ip_address: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+
+    /// Region where this resource will be [managed](https://docs.aws.amazon.com/general/latest/gr/rande.html#regional-endpoints). Defaults to the Region set in the [provider configuration](https://registry.terraform.io/providers/hashicorp/aws/latest/docs#aws-configuration-reference).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub support_code: Option<String>,
 }
 
 impl AwsLightsailStaticIpDetails {
@@ -268,6 +297,32 @@ impl AwsLightsailStaticIpDetails {
     }
 }
 
+impl crate::terra::TerraJson for AwsLightsailStaticIpDetails {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("serialization should not fail")
+    }
+}
+
+impl crate::terra::TerraResource for AwsLightsailStaticIpDetails {
+    fn resource_type(&self) -> &'static str { "aws_lightsail_static_ip" }
+    fn provider(&self) -> &'static crate::terra::TerraProvider { &crate::terra::TerraProvider::AWS }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename = "port_info")]
+pub struct AwsLightsailInstancePublicPortsResourceBlockTypePortInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cidr_list_aliases: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cidrs: Option<Vec<String>>,
+    pub from_port: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ipv6_cidrs: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub protocol: String,
+    pub to_port: i64,
+}
+
 impl AwsLightsailInstancePublicPortsResourceBlockTypePortInfo {
     pub fn new(from_port: i64, protocol: String, to_port: i64) -> Self {
         Self {
@@ -281,6 +336,17 @@ impl AwsLightsailInstancePublicPortsResourceBlockTypePortInfo {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename = "add_on")]
+pub struct AwsLightsailInstanceResourceBlockTypeAddOn {
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub snapshot_time: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub status: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub r#type: String,
+}
+
 impl AwsLightsailInstanceResourceBlockTypeAddOn {
     pub fn new(snapshot_time: String, status: String, r#type: String) -> Self {
         Self {
@@ -289,60 +355,5 @@ impl AwsLightsailInstanceResourceBlockTypeAddOn {
             r#type,
         }
     }
-}
-
-impl crate::terra::TerraJson for AwsLightsailInstanceDetails {
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serialization should not fail")
-    }
-}
-
-impl crate::terra::TerraResource for AwsLightsailInstanceDetails {
-    fn resource_type(&self) -> &'static str { "aws_lightsail_instance" }
-    fn provider(&self) -> &'static crate::terra::TerraProvider { &crate::terra::TerraProvider::AWS }
-}
-
-impl crate::terra::TerraJson for AwsLightsailInstancePublicPortsDetails {
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serialization should not fail")
-    }
-}
-
-impl crate::terra::TerraResource for AwsLightsailInstancePublicPortsDetails {
-    fn resource_type(&self) -> &'static str { "aws_lightsail_instance_public_ports" }
-    fn provider(&self) -> &'static crate::terra::TerraProvider { &crate::terra::TerraProvider::AWS }
-}
-
-impl crate::terra::TerraJson for AwsLightsailKeyPairDetails {
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serialization should not fail")
-    }
-}
-
-impl crate::terra::TerraResource for AwsLightsailKeyPairDetails {
-    fn resource_type(&self) -> &'static str { "aws_lightsail_key_pair" }
-    fn provider(&self) -> &'static crate::terra::TerraProvider { &crate::terra::TerraProvider::AWS }
-}
-
-impl crate::terra::TerraJson for AwsLightsailStaticIpDetails {
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serialization should not fail")
-    }
-}
-
-impl crate::terra::TerraResource for AwsLightsailStaticIpDetails {
-    fn resource_type(&self) -> &'static str { "aws_lightsail_static_ip" }
-    fn provider(&self) -> &'static crate::terra::TerraProvider { &crate::terra::TerraProvider::AWS }
-}
-
-impl crate::terra::TerraJson for AwsLightsailStaticIpAttachmentDetails {
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serialization should not fail")
-    }
-}
-
-impl crate::terra::TerraResource for AwsLightsailStaticIpAttachmentDetails {
-    fn resource_type(&self) -> &'static str { "aws_lightsail_static_ip_attachment" }
-    fn provider(&self) -> &'static crate::terra::TerraProvider { &crate::terra::TerraProvider::AWS }
 }
 

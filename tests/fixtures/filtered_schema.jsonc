@@ -1,0 +1,78 @@
+// an abbreviated version of actual generated schema.json by 
+// `tofu providers schema -json > schema.json`
+{
+	"format_version": "1.0",
+	"provider_schemas": {
+		"registry.opentofu.org/hashicorp/aws": {
+			"resource_schemas": {
+				"aws_s3_bucket": {
+					"version": 0,
+					"block": {
+						"attributes": {
+							"acceleration_status": {
+								"type": "string",
+								"description_kind": "plain",
+								"deprecated": true,
+								"optional": true,
+								"computed": true,
+							},
+							"acl": {
+								"type": "string",
+								"description_kind": "plain",
+								"deprecated": true,
+								"optional": true,
+								"computed": true,
+							},
+							"arn": {
+								"type": "string",
+								"description_kind": "plain",
+								"computed": true,
+							},
+							"bucket": {
+								"type": "string",
+								"description_kind": "plain",
+								"optional": true,
+								"computed": true,
+							},
+							"id": {
+								"type": "string",
+								"description_kind": "plain",
+								"optional": true,
+								"computed": true,
+							},
+							"region": {
+								"type": "string",
+								"description": "Region where this resource will be [managed](https://docs.aws.amazon.com/general/latest/gr/rande.html#regional-endpoints). Defaults to the Region set in the [provider configuration](https://registry.terraform.io/providers/hashicorp/aws/latest/docs#aws-configuration-reference).",
+								"description_kind": "plain",
+								"optional": true,
+								"computed": true,
+							},
+						},
+						"block_types": {
+							"cors_rule": {
+								"nesting_mode": "list",
+								"block": {
+									"attributes": {
+										"allowed_headers": {
+											"type": ["list", "string"],
+											"description_kind": "plain",
+											"optional": true,
+										},
+										"allowed_methods": {
+											"type": ["list", "string"],
+											"description_kind": "plain",
+											"required": true,
+										},
+									},
+									"description_kind": "plain",
+									"deprecated": true,
+								},
+							},
+						},
+						"description_kind": "plain",
+					},
+				},
+			},
+		},
+	},
+}

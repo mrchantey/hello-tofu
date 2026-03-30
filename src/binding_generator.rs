@@ -16,7 +16,7 @@ use crate::schema_bindgen::binding::{
 };
 use crate::schema_bindgen::config::CodeGeneratorConfig;
 use crate::schema_bindgen::emit::{CodeGenerator, Registry};
-use crate::terra::BindingFilter;
+use crate::terra::ResourceFilter;
 use heck::ToUpperCamelCase;
 use std::io::Write;
 use std::path::Path;
@@ -26,7 +26,7 @@ use std::path::Path;
 /// # Example — filtered, typed generation
 ///
 /// ```rust,ignore
-/// let filter = BindingFilter::default()
+/// let filter = ResourceFilter::default()
 ///     .with_resources("registry.opentofu.org/hashicorp/aws", [
 ///         "aws_lambda_function",
 ///         "aws_s3_bucket",
@@ -47,7 +47,7 @@ pub struct BindingGenerator {
 
     /// Optional resource filter.  When set, only the specified resources are
     /// parsed from the schema.
-    filter: Option<BindingFilter>,
+    filter: Option<ResourceFilter>,
 }
 
 impl Default for BindingGenerator {
@@ -105,7 +105,7 @@ impl BindingGenerator {
     }
 
     /// Set the resource filter.
-    pub fn with_filter(mut self, filter: BindingFilter) -> Self {
+    pub fn with_filter(mut self, filter: ResourceFilter) -> Self {
         self.filter = Some(filter);
         self
     }
@@ -201,11 +201,8 @@ impl BindingGenerator {
         let mut config = self.config.clone();
 
         if let Some(filter) = &self.filter {
-            // Filtered path: set generate_roots based on filter preference.
-            config = config.with_generate_roots(filter.include_roots);
-
             let (_registry, mut meta, comments) =
-                export_filtered_resources(schema, filter, &config.module_name)?;
+                export_filtered_resources(schema, filter, config.module_name_str())?;
 
             // When title-case is active, update the struct names in meta.
             if config.use_title_case {
@@ -230,7 +227,7 @@ impl BindingGenerator {
     ) -> Result<Registry, Box<dyn std::error::Error>> {
         if let Some(filter) = &self.filter {
             let (registry, _meta, _comments) =
-                export_filtered_resources(schema, filter, &self.config.module_name)?;
+                export_filtered_resources(schema, filter, self.config.module_name_str())?;
             Ok(registry)
         } else {
             let registry = export_schema_to_registry(schema)?;
@@ -265,7 +262,8 @@ mod tests {
 
     #[test]
     fn test_with_code_generator_config() {
-        let config = CodeGeneratorConfig::new("custom".to_string())
+        let config = CodeGeneratorConfig::new()
+            .with_module_name("custom")
             .with_title_case(true)
             .with_generate_builders(false);
 
@@ -299,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_generate_builder_impls_skips_all_optional() {
-        let config = CodeGeneratorConfig::new("default".to_string()).with_generate_builders(true);
+        let config = CodeGeneratorConfig::new().with_generate_builders(true);
 
         let mut registry = Registry::new();
         registry.insert(
@@ -332,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_generate_builder_impls_with_required() {
-        let config = CodeGeneratorConfig::new("default".to_string()).with_generate_builders(true);
+        let config = CodeGeneratorConfig::new().with_generate_builders(true);
 
         let mut registry = Registry::new();
         registry.insert(
@@ -372,7 +370,7 @@ mod tests {
 
     #[test]
     fn test_generate_builder_impls_with_namespace() {
-        let config = CodeGeneratorConfig::new("default".to_string()).with_generate_builders(true);
+        let config = CodeGeneratorConfig::new().with_generate_builders(true);
 
         let mut registry = Registry::new();
         registry.insert(
@@ -398,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_generate_builder_impls_title_case() {
-        let config = CodeGeneratorConfig::new("default".to_string())
+        let config = CodeGeneratorConfig::new()
             .with_title_case(true)
             .with_generate_builders(true);
 
@@ -432,7 +430,7 @@ mod tests {
             struct_name: "AwsS3BucketDetails".to_string(),
         }];
 
-        let config = CodeGeneratorConfig::new("default".to_string())
+        let config = CodeGeneratorConfig::new()
             .with_title_case(true)
             .with_generate_trait_impls(true)
             .with_generate_builders(false)
@@ -469,7 +467,7 @@ mod tests {
 
     #[test]
     fn test_custom_preamble() {
-        let config = CodeGeneratorConfig::new("default".to_string())
+        let config = CodeGeneratorConfig::new()
             .with_custom_preamble("// custom preamble\nuse custom::stuff;")
             .with_generate_builders(false);
 
@@ -493,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_generate_default_forces_default_derive() {
-        let config = CodeGeneratorConfig::new("default".to_string())
+        let config = CodeGeneratorConfig::new()
             .with_generate_default(true)
             .with_generate_builders(false);
 

@@ -105,7 +105,7 @@ impl<'a> CodeGenerator<'a> {
 
         let current_namespace = self
             .config
-            .module_name
+            .module_name_str()
             .split('.')
             .map(String::from)
             .collect();
@@ -603,14 +603,7 @@ where
         // Find the matching meta entry.  The struct_name we receive is the
         // final (possibly title-cased) name, so compare against the
         // (also possibly renamed) meta struct_name.
-        let matching = meta.iter().find(|m| {
-            let meta_name = if self.generator.config.use_title_case {
-                m.struct_name.to_upper_camel_case()
-            } else {
-                m.struct_name.clone()
-            };
-            meta_name == struct_name
-        });
+        let matching = meta.iter().find(|m| m.struct_name == struct_name);
 
         let m = match matching {
             Some(m) => m,

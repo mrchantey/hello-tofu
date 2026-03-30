@@ -5,7 +5,7 @@ use crate::terra::ResourceMeta;
 /// Code generation options meant to be supported by all languages.
 #[derive(Clone, Debug)]
 pub struct CodeGeneratorConfig {
-    pub(crate) module_name: String,
+    pub(crate) module_name: Option<String>,
     pub(crate) external_definitions: ExternalDefinitions,
     pub(crate) comments: DocComments,
     /// When `true`, convert all generated type names from `snake_case` to
@@ -46,15 +46,15 @@ pub type DocComments =
 
 impl Default for CodeGeneratorConfig {
     fn default() -> Self {
-        Self::new("default".to_string())
+        Self::new()
     }
 }
 
 impl CodeGeneratorConfig {
-    /// Default config for the given module name.
-    pub fn new(module_name: String) -> Self {
+    /// Default config.
+    pub fn new() -> Self {
         Self {
-            module_name,
+            module_name: None,
             external_definitions: BTreeMap::new(),
             comments: BTreeMap::new(),
             use_title_case: false,
@@ -65,6 +65,17 @@ impl CodeGeneratorConfig {
             generate_trait_impls: false,
             resource_meta: Vec::new(),
         }
+    }
+
+    /// Set the module name for code generation.
+    pub fn with_module_name(mut self, name: impl Into<String>) -> Self {
+        self.module_name = Some(name.into());
+        self
+    }
+
+    /// Return the module name as a `&str`, falling back to `"default"`.
+    pub(crate) fn module_name_str(&self) -> &str {
+        self.module_name.as_deref().unwrap_or("default")
     }
 
     /// Container names provided by external modules.

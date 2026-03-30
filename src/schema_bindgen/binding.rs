@@ -1,7 +1,7 @@
 use crate::schema_bindgen::config::CodeGeneratorConfig;
 use crate::schema_bindgen::config::DocComments;
 use crate::schema_bindgen::emit::{CodeGenerator, Registry};
-use crate::terra::{BindingFilter, ResourceMeta};
+use crate::terra::{ResourceFilter, ResourceMeta};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_reflection::{ContainerFormat, Format, Named, VariantFormat};
@@ -118,7 +118,9 @@ pub fn generate_serde(
     out: &mut dyn Write,
     registry: &Registry,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let config = CodeGeneratorConfig::new(config.to_string()).with_generate_roots(true);
+    let config = CodeGeneratorConfig::new()
+        .with_module_name(config)
+        .with_generate_roots(true);
 
     CodeGenerator::new(&config).output(out, registry)
 }
@@ -170,12 +172,12 @@ pub fn export_schema_to_registry(
 }
 
 /// Export only the resources that pass through `filter`, skipping root enums
-/// and the top-level `config` struct (unless `filter.include_roots` is set).
+/// and the top-level `config` struct.
 /// Returns the registry, metadata about every generated resource, and
 /// collected doc comments extracted from schema `description` fields.
 pub fn export_filtered_resources(
     schema: &TerraformSchemaExport,
-    filter: &BindingFilter,
+    filter: &ResourceFilter,
     module_name: &str,
 ) -> std::result::Result<(Registry, Vec<ResourceMeta>, DocComments), Box<dyn std::error::Error>> {
     let mut registry = Registry::new();

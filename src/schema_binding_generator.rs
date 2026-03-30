@@ -253,7 +253,7 @@ impl SchemaBindingGenerator {
         let schema = BindingGenerator::read_schema(schema_path)?;
 
         for (target, resources) in &self.targets {
-            let filter = crate::terra::BindingFilter::default()
+            let filter = crate::terra::ResourceFilter::default()
                 .with_resources(target.provider.source.as_ref(), resources.clone());
 
             // Clone the base binding generator and apply the per-target filter.

@@ -178,7 +178,7 @@ pub fn export_schema_to_registry(
 pub fn export_filtered_resources(
     schema: &TerraformSchemaExport,
     filter: &ResourceFilter,
-    module_name: &str,
+    config: &CodeGeneratorConfig,
 ) -> std::result::Result<(Registry, Vec<ResourceMeta>, DocComments), Box<dyn std::error::Error>> {
     let mut registry = Registry::new();
     let mut meta = Vec::new();
@@ -199,7 +199,12 @@ pub fn export_filtered_resources(
                 inject_meta_arguments(&mut block);
 
                 let container_name = format!("{}_details", resource_name);
-                collect_descriptions(module_name, &container_name, &block, &mut comments);
+                collect_descriptions(
+                    config.module_name_str(),
+                    &container_name,
+                    &block,
+                    &mut comments,
+                );
 
                 export_block(
                     Some("resource".to_owned()),
@@ -208,10 +213,18 @@ pub fn export_filtered_resources(
                     &mut registry,
                 )?;
 
+                use heck::ToUpperCamelCase;
+
+                let struct_name = if config.use_title_case {
+                    container_name.to_upper_camel_case()
+                } else {
+                    container_name
+                };
+
                 meta.push(ResourceMeta {
                     resource_type: resource_name.clone(),
                     provider_source: provider_source.clone(),
-                    struct_name: container_name,
+                    struct_name,
                 });
             }
         }

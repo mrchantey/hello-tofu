@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Use the existing schema.json instead of running the full tofu init cycle.
     eprintln!("Generating provider bindings from schema.json ...");
-    generator.generate_from_schema("schema.json")?;
+    generator.generate()?;
     eprintln!("Done! Provider modules written to src/providers/");
 
     Ok(())

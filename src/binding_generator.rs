@@ -17,7 +17,6 @@ use crate::schema_bindgen::binding::{
 use crate::schema_bindgen::config::CodeGeneratorConfig;
 use crate::schema_bindgen::emit::{CodeGenerator, Registry};
 use crate::terra::ResourceFilter;
-use heck::ToUpperCamelCase;
 use std::io::Write;
 use std::path::Path;
 
@@ -201,16 +200,7 @@ impl BindingGenerator {
         let mut config = self.config.clone();
 
         if let Some(filter) = &self.filter {
-            let (_registry, mut meta, comments) =
-                export_filtered_resources(schema, filter, config.module_name_str())?;
-
-            // When title-case is active, update the struct names in meta.
-            if config.use_title_case {
-                for m in &mut meta {
-                    m.struct_name = m.struct_name.to_upper_camel_case();
-                }
-            }
-
+            let (_registry, meta, comments) = export_filtered_resources(schema, filter, &config)?;
             config = config.with_resource_meta(meta).with_comments(comments);
         } else {
             // Unfiltered: full schema with root types.
@@ -227,7 +217,7 @@ impl BindingGenerator {
     ) -> Result<Registry, Box<dyn std::error::Error>> {
         if let Some(filter) = &self.filter {
             let (registry, _meta, _comments) =
-                export_filtered_resources(schema, filter, self.config.module_name_str())?;
+                export_filtered_resources(schema, filter, &self.config)?;
             Ok(registry)
         } else {
             let registry = export_schema_to_registry(schema)?;

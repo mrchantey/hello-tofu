@@ -25,19 +25,17 @@ use std::process::Command;
 /// Pass it to [`SchemaBindingGenerator::with_resources`] to register which
 /// provider resources should be generated and where the output should be
 /// written.
-pub struct ProviderBindingTarget {
+pub struct ResourceList {
     /// The provider to generate bindings for.
     pub provider: TerraProvider,
-    /// Destination file path (relative to the crate root), e.g.
-    /// `"src/providers/aws_lambda.rs"`.
-    pub path: PathBuf,
+    pub resources: Vec<String>,
 }
 
-impl ProviderBindingTarget {
-    pub fn new(provider: TerraProvider, path: impl Into<PathBuf>) -> Self {
+impl ResourceList {
+    pub fn new(provider: TerraProvider, resources: Vec<String>) -> Self {
         Self {
             provider,
-            path: path.into(),
+            resources,
         }
     }
 }
@@ -68,7 +66,7 @@ impl ProviderBindingTarget {
 /// ```
 pub struct SchemaBindingGenerator {
     /// Each entry maps a provider binding target to its list of resource type names.
-    targets: Vec<(ProviderBindingTarget, Vec<String>)>,
+    files: Vec<BindingFile>,
     /// Working directory for tofu operations.  Defaults to
     /// `target/terra-bindings-generator`.
     work_dir: PathBuf,
@@ -78,10 +76,38 @@ pub struct SchemaBindingGenerator {
     binding_generator: BindingGenerator,
 }
 
+pub struct BindingFile {
+    /// Destination file path (relative to the crate root), e.g.
+    /// `"src/providers/aws_lambda.rs"`.
+    pub path: PathBuf,
+    resources: Vec<ResourceList>,
+}
+
+impl BindingFile {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            resources: Vec::new(),
+        }
+    }
+
+    pub fn with_resources(
+        mut self,
+        provider: TerraProvider,
+        resources: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.resources.push(ResourceList::new(
+            provider,
+            resources.into_iter().map(Into::into).collect(),
+        ));
+        self
+    }
+}
+
 impl Default for SchemaBindingGenerator {
     fn default() -> Self {
         Self {
-            targets: Vec::new(),
+            files: Vec::new(),
             work_dir: PathBuf::from("target/terra-bindings-generator"),
             binding_generator: BindingGenerator::new()
                 .with_title_case(true)
@@ -94,13 +120,8 @@ impl Default for SchemaBindingGenerator {
 
 impl SchemaBindingGenerator {
     /// Add a provider and its resource list.
-    pub fn with_resources(
-        mut self,
-        target: ProviderBindingTarget,
-        resources: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        let resources: Vec<String> = resources.into_iter().map(Into::into).collect();
-        self.targets.push((target, resources));
+    pub fn with_file(mut self, file: BindingFile) -> Self {
+        self.files.push(file);
         self
     }
 
@@ -175,20 +196,21 @@ impl SchemaBindingGenerator {
     fn write_providers_tf(&self) -> Result<(), Box<dyn std::error::Error>> {
         let mut required_providers = serde_json::Map::new();
 
-        for (target, _) in &self.targets {
-            let p = &target.provider;
-            // Deduplicate by local name.
-            let local = p.local_name().to_string();
-            if required_providers.contains_key(&local) {
-                continue;
+        for file in &self.files {
+            for list in &file.resources {
+                // Deduplicate by local name.
+                let local = list.provider.local_name().to_string();
+                if required_providers.contains_key(&local) {
+                    continue;
+                }
+                required_providers.insert(
+                    local,
+                    json!({
+                        "source": list.provider.short_source(),
+                        "version": list.provider.version.as_ref(),
+                    }),
+                );
             }
-            required_providers.insert(
-                local,
-                json!({
-                    "source": p.short_source(),
-                    "version": p.version.as_ref(),
-                }),
-            );
         }
 
         let tf_json = json!({
@@ -252,20 +274,22 @@ impl SchemaBindingGenerator {
     fn generate_bindings(&self, schema_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let schema = BindingGenerator::read_schema(schema_path)?;
 
-        for (target, resources) in &self.targets {
-            let filter = crate::terra::ResourceFilter::default()
-                .with_resources(target.provider.source.as_ref(), resources.clone());
+        for file in &self.files {
+            let mut filter = crate::terra::ResourceFilter::default();
+            for list in &file.resources {
+                filter = filter.with_resources(list.provider.source.as_ref(), &list.resources);
+            }
 
             // Clone the base binding generator and apply the per-target filter.
             let binding_gen = self.binding_generator.clone().with_filter(filter);
 
             // Ensure the parent directory exists.
-            if let Some(parent) = target.path.parent() {
+            if let Some(parent) = file.path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
 
-            binding_gen.generate_to_file(&schema, &target.path)?;
-            eprintln!("[schema_binding_generator] wrote {}", target.path.display());
+            binding_gen.generate_to_file(&schema, &file.path)?;
+            eprintln!("[schema_binding_generator] wrote {}", file.path.display());
         }
 
         Ok(())
